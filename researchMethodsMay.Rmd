@@ -1,0 +1,948 @@
+---
+title: "Research Methods May"
+author: "Jacqueline Rehn"
+date: "18 May 2017"
+output: html_document
+---
+#May 1
+
+* View nucleotide substitution data
+* Identify key information to incorporate into data frame
+* Subset data and convert number of nucleotide substitutions to a frequency
+* Plot frequencies for selected positions on same axis
+
+Nucleotide substitution counts provided for all potential substitutions as well as single insertion and deletion. This is provides based on position 5p and 3p ends of reads and for both the + and - strand. 
+
+Chose to focus on substitutions. Rather than plot counts, converted to frequency by dividing the number of nucleotide substitions by the number of bases at that position (e.g. C>T/C). Also thought best to collate counts based on position for the + and - strand.
+
+```{r eval = FALSE}
+#load packages
+library(dplyr)
+library(readr)
+library(magrittr)
+library(tibble)
+library(ggplot2)
+
+#Read text misincorporation.txt file into a datafram
+pging.423.ntSubData <- read_delim("ntSubData/pgingivalis_SRR2075423_misincorporation.txt",
+                                     delim = "\t", skip = 3)
+
+#Subset specific rows and columns from the pging.423.ntSubData dataframe
+pging.423.ntSubData <- pging.423.ntSubData[, 2:21]
+
+#Subset positive 5p data for the 12 nt substitutions
+pging.5p.423.ntSubData <- subset(pging.423.ntSubData, pging.423.ntSubData$End == '5p')
+
+###Calculate the frequency of C>T ntSub rate for positions 1 to 25
+
+#Subset positions 1-25
+pging5p.423.ntSubData2 <- subset(pging.5p.423.ntSubData, pging.5p.423.ntSubData$Pos < 26)
+#Group - and + strand together
+pging5p.423.ntSubData2 <- pging5p.423.ntSubData2[, 3:20]
+pging.5p.423.freq.ntSub <- pging5p.423.ntSubData2 %>%
+  group_by(Pos) %>%
+  summarise_each(funs(sum))
+pging.5p.423.freq.ntSub
+#Calculate C>T freq based on position and assign to new dataframe
+pging.5p.423.freq.ntSub <- transform(pging.5p.423.freq.ntSub, freqCtoT = `C>T` / C)
+#Plot freqCtoT against position
+pging.5p.423.freq.ntSub %>% ggplot(aes(x = Pos, y = freqCtoT)) + 
+  geom_line(aes()) + theme_bw()
+```
+
+This produced the desired plot for single substitution. Attempted to repeat the frequency calculation and transformation for addition nucleotide substitutions. Produced data frame with additional columns but in this form unable to plot all frequencies on same axes.
+
+Need to go back and re-shape data for plotting.
+
+#May 2
+
+* Business Case Presentation
+
+#May 3
+
+* Reshape data and plot
+
+Was recieving errors due to column names containing `>`. Created a single vector with desired column names to use repeatedly. Re-imported data, selecting only for the substitution counts, and applied new names.
+
+Used select, mutate and melt to collate 5p +/- strand data, and convert count vectors to frequencies.
+
+```{r eval = FALSE}
+#Create a vector with desired column names
+subDataColNames <- (c("Chr", "End", "Std", "Pos", "A", "C", "G", "T", "Total", 
+                      "GtoA", "CtoT", "AtoG", "TtoC", "AtoC", "AtoT", "CtoG", 
+                      "CtoA", "TtoG", "TtoA", "GtoC", "GtoT"))
+
+#Read in file without the column names, 
+#selecting for the first 21 columns
+#replacing with desired column names
+SRR423.pging.subData <- 
+  read_delim("ntSubData/pgingivalis_SRR2075423_misincorporation.txt",
+             delim = "\t", skip = 4, col_names = FALSE) %>%
+  select(1:21) %>% set_colnames(subDataColNames)
+
+#collate data based on strand and convert counts to frequencies
+SRR423.pging.subFreq <- SRR423.pging.subData %>% filter(End == "5p") %>% 
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>% summarise_each(funs(sum)) %>% 
+  mutate(GtoA = GtoA/G, CtoT = CtoT/C, AtoG = AtoG/A, TtoC = TtoC/T, 
+         AtoC = AtoC/A, AtoT = AtoT/A, CtoG = CtoG/C, CtoA = CtoA/C, 
+         TtoG = TtoG/T, TtoA = TtoA/T, GtoC = GtoC/G, GtoT = GtoT/G) %>% 
+  select(-A, -C, -G, -T, -Total) %>% 
+  melt(id.vars = c("Pos"), variable.name = "substitution", value.name = "Frequency") 
+
+```
+
+Plotting all data on single set of axis made it difficult to read. Instead subset data according to whether mutations are transition or transversion and plotted separately.
+
+```{r eval = FALSE}
+#subset the data so that only plotting transition mutations
+#must go back and subset original data before melting
+SRR423.pging.transition.subFreq <- SRR423.pging.subData %>% filter(End == "5p") %>% 
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>% summarise_each(funs(sum)) %>% 
+  mutate(GtoA = GtoA/G, CtoT = CtoT/C, AtoG = AtoG/A, TtoC = TtoC/T, 
+         AtoC = AtoC/A, AtoT = AtoT/A, CtoG = CtoG/C, CtoA = CtoA/C, 
+         TtoG = TtoG/T, TtoA = TtoA/T, GtoC = GtoC/G, GtoT = GtoT/G) %>% 
+  select(-A, -C, -G, -T, -Total, -AtoT, -TtoA, -CtoG, -GtoC, -AtoC, -CtoA, -GtoT, -TtoG) %>% 
+  melt(id.vars = c("Pos"), variable.name = "substitution", value.name = "Frequency")
+#plot
+ggplot(SRR423.pging.transition.subFreq, aes(x=Pos, y=Frequency, colour = substitution, group = substitution)) +
+  geom_line() + xlab("Position") + ylab("Substitution Frequency") +
+  ggtitle("Frequency of transition mutations based on position") +
+  theme_bw() 
+```
+
+#May 4
+
+Looking at the plot for substitution frequency based on position there is a lot of noise. Not obvious if any particular mutations are more common than others and whether there is a positional bias.
+
+Re-plotted data for 5p and 3p ends but used facet-wrap to separate out each substitution so that they could be visually compared in order to identify specific mutations of interest.
+
+```{r eval = FALSE}
+#Use facet-wrap to plot each substitution for the 5p data separately
+SRR423.pging.subFreq %>% filter(Pos < 21) %>%
+  ggplot(aes(x=Pos, y=Frequency, colour=substitution)) + 
+  geom_line() + theme_bw() + theme(legend.position = "none") +
+  xlab("Position from the 5' end") + ylab("Substitution frequency") +
+  facet_wrap(~substitution)
+
+#subset and transform 3p data (collating the +/- Std counts)
+SRR423.pging.3psubFreq <- SRR423.pging.subData %>% filter(End == "3p") %>% 
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>% 
+  summarise_each(funs(sum)) %>% 
+  mutate(GtoA = GtoA/G, CtoT = CtoT/C, AtoG = AtoG/A, 
+         TtoC = TtoC/T, AtoC = AtoC/A, AtoT = AtoT/A, 
+         CtoG = CtoG/C, CtoA = CtoA/C, TtoG = TtoG/T, 
+         TtoA = TtoA/T, GtoC = GtoC/G, GtoT = GtoT/G) %>% 
+  select(-A, -C, -G, -T, -Total) %>% 
+  melt(id.vars = c("Pos"), variable.name = "substitution", value.name = "Frequency") 
+#plot data 
+SRR423.pging.3psubFreq %>% filter(Pos < 21) %>% 
+  ggplot(aes(x=Pos, y=Frequency, colour=substitution)) + 
+  geom_line() + scale_x_reverse() + 
+  theme_bw() + theme(legend.position = "none") +
+  xlab("Position from the 3' end") + ylab("Substitution frequency") +
+  facet_wrap(~substitution)
+```
+
+#May 5
+
+Wish to compare 5p & 3p nucleotide substitution data for a single sample side by side.
+Need to subset the data again.
+
+```{r eval = FALSE}
+###Plot 5p data separately to 3p
+#manipulate data to produce object with 5p substitution frequency data
+SRR423.pging.5pSubData <- SRR423.pging.subData %>% filter(End == "5p") %>% 
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>% summarise_each(funs(sum)) %>% 
+  mutate(GtoA = GtoA/G, CtoT = CtoT/C, AtoG = AtoG/A, TtoC = TtoC/T, 
+         AtoC = AtoC/A, AtoT = AtoT/A, CtoG = CtoG/C, CtoA = CtoA/C, 
+         TtoG = TtoG/T, TtoA = TtoA/T, GtoC = GtoC/G, GtoT = GtoT/G) %>% 
+  select(-A, -C, -G, -T, -Total)
+#Plot specific substitutions and assign to object
+plot.pging.423.5p <- SRR423.pging.5pSubData %>% select(1:5) %>% filter(Pos < 26) %>% 
+  melt(id.vars = c("Pos"), variable.name = "Sub", value.name = "Freq") %>% 
+  ggplot(aes(x=Pos, y=Freq, colour=Sub)) + geom_line(aes(size=Sub)) + 
+  scale_colour_manual(values=c("blue", "red", "green", "orange")) + 
+  scale_size_manual(values=c(1, 1, 0.2, 0.2)) + theme_classic() + 
+  theme(legend.position = c(0.8, 0.8), legend.title = element_blank()) +
+  xlab("Position from 5' End") + ylab("Substitution Frequency")
+
+###Same plot as above but with 3p data
+#manipulate data to produce object with sub freq at 3p end of read
+SRR423.pging.3pSubData <- SRR423.pging.subData %>% filter(End == "3p") %>% 
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>% summarise_each(funs(sum)) %>% 
+  mutate(GtoA = GtoA/G, CtoT = CtoT/C, AtoG = AtoG/A, TtoC = TtoC/T, 
+         AtoC = AtoC/A, AtoT = AtoT/A, CtoG = CtoG/C, CtoA = CtoA/C, 
+         TtoG = TtoG/T, TtoA = TtoA/T, GtoC = GtoC/G, GtoT = GtoT/G) %>% 
+  select(-A, -C, -G, -T, -Total)
+#plot specific substitutions
+plot.pging.423.3p <- SRR423.pging.3pSubData %>% select(1:5) %>% filter(Pos < 26) %>% 
+  melt(id.vars = c("Pos"), variable.name = "Sub", value.name = "Freq") %>% 
+  ggplot(aes(x=Pos, y=Freq, colour=Sub)) + geom_line(aes(size=Sub)) + 
+  scale_colour_manual(values=c("blue", "red", "green", "orange")) + 
+  scale_size_manual(values=c(1, 1, 0.2, 0.2)) + scale_x_reverse() +
+  scale_y_continuous(position = "right") + theme_classic() + 
+  theme(legend.position = "none", axis.title.y=element_blank()) +
+  xlab("Position from 3' End") + ylab("Substitution Frequency")
+
+#Plot 5p and 3p data plots side-by-side
+grid.arrange(plot.pging.423.5p, plot.pging.423.3p, ncol=2, widths=c(1,0.9))
+
+########## Repeat plotting for sample SRR2075431
+
+#Import substitution data for SRR2075431 aligning to pgingivalis
+SRR431.pging.subData <- 
+  read_delim("ntSubData/pgingivalis_SRR2075431.misincorporation.txt", 
+             delim = "\t", skip = 4, col_names = FALSE) %>% 
+  select(1:21) %>% set_colnames(subDataColNames)
+
+#subset 5p data, group by Pos and collate data
+data.431.5p <- SRR431.pging.subData %>% filter(End == "5p") %>% 
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>% 
+  summarise_each(funs(sum))
+#Create data frame containing substitution frequencies based on position
+source("calc.sub.freq.R")
+SRR431.pging.5pSubData <- calc.sub.freq(data.431.5p)
+
+#subset 3p data, group by Pos and collate
+data.431.3p <- SRR431.pging.subData %>% filter(End == "3p") %>%
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>%
+  summarise_each(funs(sum))
+#Create data frame containing substitution frequencies based on position
+SRR431.pging.3pSubData <- calc.sub.freq(data.431.3p)
+
+###Plot 5p data, including only transition mutations, and assign to object
+plot.pging.431.5p <- SRR431.pging.5pSubData %>% select(1:5) %>% filter(Pos < 26) %>%
+  melt(id.vars = c("Pos"), variable.name = "Sub", value.name = "Freq") %>%
+  ggplot(aes(x=Pos, y=Freq, colour=Sub)) + geom_line(aes(size=Sub)) + 
+  scale_colour_manual(values=c("blue", "red", "green", "orange")) + 
+  scale_size_manual(values=c(1, 1, 0.2, 0.2)) + theme_classic() + 
+  theme(legend.position = c(0.8, 0.8), legend.title = element_blank()) +
+  xlab("Position from 5' End") + ylab("Substitution Frequency")
+
+###Plot 3 data, including only transition mutations, and assign to object
+plot.pging.431.3p <- SRR431.pging.3pSubData %>% select(1:5) %>% filter(Pos < 26) %>%
+  melt(id.vars = c("Pos"), variable.name = "Sub", value.name = "Freq") %>%
+  ggplot(aes(x=Pos, y=Freq, colour=Sub)) + geom_line(aes(size=Sub)) + 
+  scale_colour_manual(values=c("blue", "red", "green", "orange")) + 
+  scale_size_manual(values=c(1, 1, 0.2, 0.2)) + scale_x_reverse() +
+  scale_y_continuous(position = "right") + theme_classic() + 
+  theme(legend.position = "none", axis.title.y=element_blank()) +
+  xlab("Position from 3' End") + ylab("Substitution Frequency")
+
+#Plot 5p and 3p data plots side-by-side
+grid.arrange(plot.pging.431.5p, plot.pging.431.3p, ncol=2, widths=c(1,0.9))
+```
+
+#May 8
+
+* Modified code for plotting 5p and 3p transition mutations in order to ensure the y_scale was the same on all plots for comparison
+
+```{r eval = FALSE}
+#Import substitution data for SRR2075431 aligning to pgingivalis
+SRR431.pging.subData <- 
+  read_delim("ntSubData/pgingivalis_SRR2075431.misincorporation.txt", 
+             delim = "\t", skip = 4, col_names = FALSE) %>% 
+  select(1:21) %>% set_colnames(subDataColNames)
+
+#subset 5p data, group by Pos and collate data
+data.431.5p <- SRR431.pging.subData %>% filter(End == "5p") %>% 
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>% 
+  summarise_each(funs(sum))
+#Create data frame containing substitution frequencies based on position
+source("calc.sub.freq.R")
+SRR431.pging.5pSubData <- calc.sub.freq(data.431.5p)
+
+#subset 3p data, group by Pos and collate
+data.431.3p <- SRR431.pging.subData %>% filter(End == "3p") %>%
+  select(-Chr, -End, -Std) %>% group_by(Pos) %>%
+  summarise_each(funs(sum))
+#Create data frame containing substitution frequencies based on position
+SRR431.pging.3pSubData <- calc.sub.freq(data.431.3p)
+
+###Plot 5p data, including only transition mutations, and assign to object
+plot.pging.431.5p <- SRR431.pging.5pSubData %>% select(1:5) %>% filter(Pos < 26) %>%
+  melt(id.vars = c("Pos"), variable.name = "Sub", value.name = "Freq") %>%
+  ggplot(aes(x=Pos, y=Freq, colour=Sub)) + geom_line(aes(size=Sub)) + 
+  ylim(0, 0.15) + 
+  scale_colour_manual(values=c("blue", "red", "green", "orange")) + 
+  scale_size_manual(values=c(1, 1, 0.2, 0.2)) + theme_classic() + 
+  theme(legend.position = c(0.8, 0.8), legend.title = element_blank()) +
+  xlab("Position from 5' End") + ylab("Substitution Frequency")
+
+###Plot 3p data, including only transition mutations, and assign to object
+plot.pging.431.3p <- SRR431.pging.3pSubData %>% select(1:5) %>% filter(Pos < 26) %>%
+  melt(id.vars = c("Pos"), variable.name = "Sub", value.name = "Freq") %>%
+  ggplot(aes(x=Pos, y=Freq, colour=Sub)) + geom_line(aes(size=Sub)) + 
+  scale_colour_manual(values=c("blue", "red", "green", "orange")) + 
+  scale_size_manual(values=c(1, 1, 0.2, 0.2)) + scale_x_reverse() +
+  scale_y_continuous(limits = c(0, 0.15), position = "right") + theme_classic() + 
+  theme(legend.position = "none", axis.title.y=element_blank()) +
+  xlab("Position from 3' End") + ylab("Substitution Frequency")
+
+#Plot 5p and 3p data plots side-by-side
+grid.arrange(plot.pging.431.5p, plot.pging.431.3p, ncol=2, widths=c(1,0.9))
+```
+
+* Reviewed code for comparing fragment lengths
+* Added to data frame logical argument specifying bacteria as gram negative or positive
+* Plotted with this information
+
+```{r eval = FALSE}
+#### Boxplot of avg fragment lengths within a sample aliginging to separate genomes ####
+
+###Sample SRR2075423
+
+#Read in files for this sample 
+aoris.423.lgdist <- read.in.file("lengthData/aoris_SRR2075423_lgdistribution.txt")
+pprop.423.lgdist <- read.in.file("lengthData/ppropionicum_SRR2075423_lgdistribution.txt")
+smutans.423.lgdist <- read.in.file("lengthData/smutans_SRR2075423_lgdistribution.txt")
+tfors.423.lgdist <- read.in.file("lengthData/tforsythia_SRR2075423_lgdistribution.txt")
+
+#Convert files to vector of lengths
+aoris.vector.423 <- length.data(aoris.423.lgdist)
+pprop.vector.423 <- length.data(pprop.423.lgdist)
+smutans.vector.423 <- length.data(smutans.423.lgdist)
+tfors.vector.423 <- length.data(tfors.423.lgdist)
+
+#Use lapply to generate list of all vectors from sample SRR2075423
+#create character vector listing names of each vector to include in list
+SRR2075423.vector.list <- c("pging.vector.423", "aoris.vector.423", "pprop.vector.423", 
+                        "smutans.vector.423", "tfors.vector.423")
+#use lapply to assign data from vectors listed into object
+SRR2075423.lg.data <- lapply(SRR2075423.vector.list, get, envir=environment())
+#assign names to list
+names(SRR2075423.lg.data) <- SRR2075423.vector.list
+#Generate boxplot compareing each genome
+names(SRR2075423.lg.data) %>% lapply(function(x){
+  data_frame(genome = x, lengths = SRR2075423.lg.data[[x]])
+}) %>% bind_rows() %>% 
+  ggplot(aes(x = genome, y = lengths)) + 
+  geom_boxplot(aes(fill = genome)) + theme_bw()
+#specify which genomes are gram- (gram.neg) and assign to dataframe
+gram.neg <- data_frame(genome = names(SRR2075423.lg.data), 
+                       gram.neg = c("TRUE", "FALSE", "FALSE", "FALSE", "TRUE"))
+#join this information to overall dataframe with left_join(gram.neg) 
+SRR423.fragLengths <- names(SRR2075423.lg.data) %>% lapply(function(x){
+  data_frame(genome = x, lengths = SRR2075423.lg.data[[x]])}) %>% 
+  bind_rows() %>% left_join(gram.neg) 
+#Plot data
+SRR423.fragLengths %>% ggplot(aes(x = genome, y = lengths, fill = gram.neg)) + 
+  xlab("Genome") + ylab("Average fragment lengths") +
+  scale_x_discrete(breaks=c("aoris.vector.423", "pging.vector.423", "pprop.vector.423", 
+                            "smutans.vector.423", "tfors.vector.423"), labels=c("A. oris",
+                            "P. gingivalis", "P. Propionicum", "S. mutans", 
+                            "T. forsythia")) + 
+  geom_boxplot() + theme_bw()
+```
+
+* Meeting with Jimmy
+  * Shared plots to date
+  * Most plots appropriate but coverage in ziesemer data is low limiting its usability
+  * If possible need to include a distribution plot (geom_line) in which fragment lengths for multiple genomes plotted over each other 
+  * Shouldn't move & rename files (use file path to determine name & find or list.files to locate relvant files for importing into R)
+  * Need to re-process data using a concatenated fasta file in order to ensure reads are aligning to only one genome (not conserved regions of multiple genomes)
+  * Emailed Laura to arrange meeting on Wednesday
+  * Need to summarise all code to date in a single R markdown document, explaining the purpose behind each piece of code
+  
+Began re-writing bash script to include concatenated files. 
+
+```{bash, eval = FALSE}
+
+#!/bin/bash
+
+#USAGE: Requires trimmed_fastq files in specified directory
+#       Specify variable for location of Ref Seq genomes for downloading and alignment
+
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/ziesemer/testData
+MERGEDIR=$ROOTDIR/ziesemer/testMergedData
+ALIGNDIR=$ROOTDIR/ziesemer/testAlignData
+
+#Specify Ref Seq genomes and download locations
+REF1=aoris
+REF1LOCAL=ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/553/935/GCF_001553935.1_ASM155393v1/GCF_001553935.1_ASM155393v1_genomic.fna.gz
+REF2=pgingivalis
+REF2LOCAL=ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/010/505/GCF_000010505.1_ASM1050v1/GCF_000010505.1_ASM1050v1_genomic.fna.gz
+REF3=smutans
+REF3LOCAL=ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/007/465/GCF_000007465.2_ASM746v2/GCF_000007465.2_ASM746v2_genomic.fna.gz
+REF4=tforsythia
+REF4LOCAL=ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/238/215/GCF_000238215.1_ASM23821v1/GCF_000238215.1_ASM23821v1_genomic.fna.gz
+REF5=ppropionicum
+REF5LOCAL=ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/277/715/GCF_000277715.1_ASM27771v1/GCF_000277715.1_ASM27771v1_genomic.fna.gz
+
+
+##### bwa_build alignment index ####
+
+#Create alignData directory
+if [ ! -d ${ALIGNDIR} ]
+  echo "Creating alignData directory"
+  mkdir -p testAlignData
+  echo "Changing into ${ALIGNDIR}"
+  cd ${ALIGNDIR}
+else
+  echo "${ALIGNDIR} already exists. Changing into ${ALIGNDIR}"
+  cd ${ALIGNDIR}
+fi
+
+#Download fasta files
+echo "Downloading ${REF1} fasta file"
+wget $REF1LOCAL
+echo "Downloading ${REF2} fasta file"
+wget $REF2LOCAL
+echo "Downloading ${REF3} fasta file"
+wget $REF3LOCAL
+echo "Downloading ${REF4} fasta file"
+wget $REF4LOCAL
+echo "Downloading ${REF5} fasta file"
+wget $REF5LOCAL
+
+#unzip fasta files
+gunzip *fna.gz
+
+#concatenate fasta files
+cat *fna > combined.fna
+
+#build-index for alignment
+bwa index -p bwaidx combined.fna
+
+##### bbmerge_mergePEreads #####
+
+#Create directory for merged data
+cd $ROOTDIR/ziesemer
+
+if [ ! -d ${MERGEDIR} ]
+  echo "Creating mergedData directory"
+  mkdir -p testMergedData
+else
+  echo "${MERGEDIR} already exists"
+fi
+
+#Change into directory where trimmed fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to trimmedData directory"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#Merge PE reads
+
+for fastq in *_1.fastq.gz
+  do
+    echo "Merging ${fastq}"
+    PREFIX=${fastq%%_1.fastq.gz}
+    bbmerge.sh in=${PREFIX}_1.fastq.gz in2=${PREFIX}_2.fastq.gz \
+    out=$MERGEDIR/${PREFIX}_MERGED.fastq.gz outu=$MERGEDIR/${PREFIX}_UNMERGED.fastq.gz \
+    ihist=$/MERGEDIR/${PREFIX}_ihist.txt 2> $MERGEDIR/${PREFIX}_mergeLog.txt
+  done
+
+##### BWA Alignment #####
+
+#Change into directory where merged_fastq files located
+if [ -d ${MERGEDIR} ]
+then
+  echo "Changing to mergedData directory"
+  cd ${MERGEDIR}
+else
+  echo "Cannot find ${MERGEDIR}"
+exit1
+fi
+
+#bwa alignment of merged reads
+for merge_file in *_MERGED.fastq.gz
+do
+  echo "Aligning ${merge_file}"
+  bwa aln -n 0.01 -o 2 -l 1024 -t 4 $ALNDIR/bwaidx $merge_file > ${merge_file/%_MERGED.fastq.gz/_MAPPED.sai}
+done
+
+#Convert .sai alignment file to bam format with the sam header. Exclude unmapped reads.
+for aln_file in *_MAPPED.sai
+  do
+    echo "Converting ${aln_file} to bam format"
+    PREFIX=${aln_file%%_MAPPED.sai}
+    bwa samse $ALNDIR/bwaidx \
+              ${PREFIX}_MAPPED.sai \
+              ${PREFIX}_MERGED.fastq.gz | \
+                samtools view -bSh -F0x4 -> $ALNDIR/${PREFIX}_bwa.bam
+  done
+
+#Remove .sai files as no longer needed
+rm *_MAPPED.sai
+
+################### sambamba sort and rmdup #####################
+
+#Change into directory where .bam files located
+if [ -d ${ALNDIR} ]
+then
+  echo "Changing to ${ALNDIR}"
+  cd ${ALNDIR}
+else
+  echo "Cannot find ${ALNDIR}"
+exit1
+fi
+
+for bam_file in *_bwa.bam
+do
+  PREFIX2=${bam_file%%_bwa.bam}
+  echo "Sorting bam file for ${bam_file}"
+  sambamba sort -o ${PREFIX2}_sorted.bam ${bam_file}
+done
+
+for sortdata in *_sorted.bam
+do
+  PREFIX3=${sortdata%%_sorted.bam}
+  echo "Removing duplicates ${sortdata}"
+  sambamba markdup -r ${sortdata} ${PREFIX3}_rmdup.bam 2> ${PREFIX3}_sambambaLog.txt
+done
+
+#Remove _sorted.bam.bai files
+rm *_sorted.bam.bai
+
+################# mapDamage #########################
+
+for rmdup_bam_file in *_rmdup.bam
+  do
+    echo "Running mapDamage on ${rmdup_bam_file}"
+    mapDamage -i ${rmdup_bam_file} -r $ALNDIR/combined.fna
+  done
+
+```
+
+Cannot be run from R markdown since all code chunks other than R are executed in separate sessions. Would need to use 'Sys.setenv()' to export variables from R to bash and then run code chunk. Will instead upload and execute separately.
+
+#May 9
+
+Completed script to process data. Had to include command to split *rmdup.bam using samtools view into bam files for individual genomes before running through mapDamage2 in order to get fragmentation data for individual genomes.
+
+Compared Counts for aligning to concatenated fasta file to previous run against individual genomes.
+
+|FileName|#mergedReads|#aln_combined|#aln_aoris|#aln_pging|#aln_pprop|#aln_smutans|#aln_tfors|
+|:-------|:-----------|:------------|:---------|:---------|:---------|:-----------|:---------|
+|SRR2075423|18829|3408|1445|470|840|1061|571|
+|SRR2075431|24957|4125|1599|474|938|1383|504|
+|SRR2075490|16479|....|1330|334|844|935|345|
+|SRR2075503|13164|....|1377|314|621|454|394|
+
+There is a greater number of reads aligning when running the script on a single genome as opposed to the concatenated fasta file. Therefore, must conclude some reads are aligning to multiple genomes. In future, sample data should be aligned to a concatenated file and the resulting bam file split into separate genomes prior to running mapDamage analysis to obtain fragment length data for specific genomes.
+
+Wrote code to manipulate fragmentation data into single tibble that can then be easily subset and plotted.
+
+```{r eval = FALSE}
+#load packages
+library(dplyr)
+library(readr)
+library(magrittr)
+library(tibble)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+#list lgdistribution.txt files and assign to an object
+lgDistFiles <- list.files("alnData", pattern = "lgdistribution.txt", full.names = TRUE, recursive = TRUE)
+#use lapply to read each text file into a data frame and bind together
+lengthData <- lgDistFiles %>% lapply(function(x){
+  read_delim(x, delim = "\t", skip = 4, col_names = FALSE) %>%
+    set_colnames(c("Std", "Length", "Occurences")) %>%
+    mutate(FileName = x)
+}) %>%
+  bind_rows
+#edit FileNames in tibble to include only the sample number and genome
+lengthData$FileName <- gsub('alnData/results_', '', lengthData$FileName)
+lengthData$FileName <- gsub('_split/lgdistribution.txt', '', lengthData$FileName)
+#Reshape data to separate SRR# and genome into separate vectors
+lengthData_wide <- lengthData %>% mutate(Genome = str_extract(FileName, "(aoris|pgingivalis|ppropionicum|smutans|tforsythia)"), FileName = str_replace(FileName, "_(aoris|pgingivalis|ppropionicum|smutans|tforsythia)", ""))
+```
+
+#May 10
+
+Edited script to count aligned reads using concatenated file and split bams. Uploaded to VM and ran script via the command line. Script as follows:
+
+```{bash eval = FALSE}
+#!/bin/bash
+
+#count merged_fastq and _rmdup.bam and _split.bam files
+
+#Specify variables
+ROOTDIR=/home/a1698312
+MERGEDIR=$ROOTDIR/ziesemer/mergedData
+ALNDIR=$ROOTDIR/ziesemer/alnData
+
+########### Count merged Reads ###############
+
+#Change into directory where MERGED_fastq files located
+if [ -d ${MERGEDIR} ]
+then
+  echo "Changing to mergedData directory"
+  cd ${MERGEDIR}
+else
+  echo "Cannot find ${MERGEDIR}"
+exit1
+fi
+
+#Generate text file for storing merged count data
+if [ ! -f merged_read_count.txt ]
+then
+  echo -e 'Creating file merged_read_count.txt'
+  echo -e 'fileName\t#mergedReads' > merged_read_count.txt
+else
+  echo  'Merged count file already exists'
+fi
+
+#Count merged reads in fastq files and print to text file
+for merged_fastq in *_MERGED.fastq.gz
+  do
+    echo "Counting number of merged reads in ${merged_fastq}"
+    MERGECOUNT=$(zcat ${merged_fastq} | egrep -c '^@SRR2075')
+    echo -e "${merged_fastq%%.fastq.gz}\t${MERGECOUNT}" >> merged_read_count.txt
+  done
+
+########## Count aligned reads ############
+
+#Change into directory where aln_files located
+if [ -d ${ALNDIR} ]
+then
+  echo "Changing to alnData directory"
+  cd ${ALNDIR}
+else
+  echo "Cannot find ${ALNDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f align_read_count.txt ]
+then
+  echo -e 'Creating file "align_read_count.txt'
+  echo -e 'fileName\t#alignedReads' > aligned_read_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count total number of reads aligned (number in *_rmdup.bam file)
+for rmdup_file in *_rmdup.bam
+  do
+    echo "Counting reads in ${rmdup_file}"
+    ALNCOUNT=$(samtools view -c ${rmdup_file})
+    echo -e "${rmdup_file%%_rmdup.bam}_all\t${ALNCOUNT}" >> aligned_read_count.txt
+  done
+
+#Count number of reads aligning to each genome (number in *_split.bam)
+for split_file in *_split.bam
+  do
+    echo "Counting reads in ${split_file}"
+    SPLITCOUNT=$(samtools view -c ${split_file})
+    echo -e "${split_file%%_split.bam}\t${SPLITCOUNT}" >> aligned_read_count.txt
+  done
+```
+
+Read text files into R and manipulated into a single data frame that could be output as a table in R markdown.
+
+```{r eval = FALSE}
+#load packages
+library(dplyr)
+library(readr)
+library(magrittr)
+library(tibble)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+
+#Read in file for merged_read_count
+mergedReadCount <- read_delim("mergedData/merged_read_count.txt", delim = "\t", skip = 1, col_names = FALSE) %>% set_colnames(c("fileName", "readCount"))
+#Read in file for aligned_read_count
+alnReadCount <- read_delim("alnData/aligned_read_count.txt", delim = "\t", skip = 1, col_names = FALSE) %>% set_colnames(c("fileName", "alnReadCount"))
+#Reshape data frame to list genome aligned with as separate column and assign to object
+alnReadCount_wide <- alnReadCount %>% mutate(genome = str_extract(fileName, "(all|aoris|pgingivalis|ppropionicum|smutans|tforsythia)"), fileName = str_replace(fileName, "_(all|aoris|pgingivalis|ppropionicum|smutans|tforsythia)", "")) %>% dcast(fileName~genome, value.var = "alnReadCount")
+#Combine the two data frames and re-order columns
+mergedReadCount <- mergedReadCount %>% mutate(fileName = str_replace(fileName, "_MERGED", ""))
+readCount <- alnReadCount_wide %>% left_join(mergedReadCount)
+readCount <- readCount[,c(1,8,2:7)]
+#Rename column headings
+headings <- c("sampleId", "merged", "align to all", "align to A.oris", "align to P.gingivalis", "align to P.propionicum", "align to S.mutans", "align to T.forsythia")
+names(readCount) <- headings
+```
+
+Manipulated misincorporation data and plotted.
+
+#Meeting with Laura
+
+Suggestions:
+* Go back and read Briggs & MapDamage2 paper to understand the calculated parameters Theta, DeltaS, DeltaD, Lambda, Rho & LogLik as these need to be included in paper for publication.
+* Expand current list of genomes aligning sample data to so as to include a wider variety of phylogenetic groups. Include an Archea, Eubacterium & mycobacterium.
+* Run pipeline on data from Neanderthal paper with greater coverage. Identify any characteristic patterns and if they relate to phylogeny. Can also plot damage against age (unlikely to see clear trend).
+* Laura has sample data from modern dental calculus that can be processed in the same way as aDNA and should be included. Use as a control or to identify differences in the damage patterns of the two sample types.
+* Identify 20-30 species that can be used as marker bacterial species for oral samples for assessing damage patterns in dental calculus. Use these to determine whether genomes in sample represent aDNA or modern contaminants. Would need to think about what key outputs are needed - e.g. % damage, listing those that fall above or below a cut-off threshold.
+* Build front end of pipeline which will extract specific genome sequences from NCBI and pipe through the damage analysis pipeline.
+
+#May 11
+
+* Identified 20-30 species that could be used as marker bacterial species for analysing damage in dental calculus samples. Description of each species, its rank appearance according to HOMD and the NCBI Ref Seq identifier summarised in a table.
+* Researched loop structures in R
+* Created loop to plot histogram of fragment lengths for each sample
+
+#May 12
+
+* Modified loop from yesterday to plot both histogram and distribution of fragment lengths for each sample. Requires sourcing of package for multiplot:
+
+```{r}
+#Plot length data using a loop
+
+#load packages
+library(dplyr)
+library(readr)
+library(magrittr)
+library(tibble)
+library(stringr)
+library(reshape2)
+library(ggplot2)
+
+# create list of all .txt files in folder 
+lgDistFiles <- list.files("alnData", pattern = "lgdistribution.txt", 
+                          full.names = TRUE, recursive = TRUE)
+
+#use lapply to read each text file into a data frame and bind together
+lengthData <- lgDistFiles %>% lapply(function(x){
+  read_delim(x, delim = "\t", skip = 4, col_names = FALSE) %>%
+    set_colnames(c("Std", "Length", "Occurences")) %>%
+    mutate(FileName = x)
+}) %>%
+  bind_rows
+
+#edit FileNames to include only the sampleID and genome
+lengthData$FileName <- gsub('alnData/results_', '', lengthData$FileName)
+lengthData$FileName <- gsub('_split/lgdistribution.txt', '', lengthData$FileName)
+#Reshape data to separate SRR# and genome into separate vectors
+lengthData <- lengthData %>% 
+  mutate(Genome = str_extract(FileName, "(aoris|pgingivalis|ppropionicum|smutans|tforsythia)"), 
+         sampleID = str_replace(FileName, "_(aoris|pgingivalis|ppropionicum|smutans|tforsythia)", ""))
+
+# create graphing function
+lgDist.graph <- function(df, na.rm = TRUE, ...){
+  
+  # create list of sampleID's in data to loop over 
+  sampleID_list <- unique(df$sampleID)
+  
+  # create for loop to produce ggplot2 graphs 
+  for (i in seq_along(sampleID_list)) {
+    
+    # create histogram plot for each sample in df 
+    plot1 <-
+      ggplot(subset(df, df$sampleID==sampleID_list[i]),
+             aes(Length, Occurences, fill = Std)) + 
+      geom_bar(stat = "identity") +
+      facet_wrap(( ~ Genome), ncol=2) +
+      theme_bw() +
+      theme(legend.position="none") + 
+      scale_y_continuous("Frequency") +
+      scale_x_continuous("Fragment length") +
+      ggtitle(paste(sampleID_list[i], ' Fragment Lengths by Genome'))
+
+    plot2 <-
+      ggplot(subset(df, df$sampleID==sampleID_list[i]),
+           aes(Length, Occurences, colour = Genome)) +
+      geom_line() +
+      xlab("Fragment length") +
+      ggtitle(paste(sampleID_list[i], ' Fragment Lenght Distribution')) +
+      theme_bw()
+    
+    ## loading the multiplot function
+    source("http://peterhaschke.com/Code/multiplot.R")
+    #print plots
+    multiplot(plot1, plot2, cols=1)
+    
+  }
+} 
+
+# run graphing function on long df
+lgDist.graph(lengthData) 
+
+```
+
+* Created a loop to convert frequency tables for each sample into vectors and plot as a box-plot for comparision.
+
+```{r eval = FALSE}
+#load packages
+library(dplyr)
+library(readr)
+library(magrittr)
+library(tibble)
+library(stringr)
+library(reshape2)
+library(ggplot2)
+
+# create list of all .txt files in folder 
+lgDistFiles <- list.files("alnData", pattern = "lgdistribution.txt", 
+                          full.names = TRUE, recursive = TRUE)
+
+#use lapply to read each text file into a data frame and bind together
+lengthData2 <- lgDistFiles %>% lapply(function(x){
+  read_delim(x, delim = "\t", skip = 4, col_names = FALSE) %>%
+    select(-1) %>% group_by(X2) %>% summarise_each(funs(sum)) -> length.vector
+  rep(length.vector$X2, length.vector$X3)
+}) 
+#Add names to each object in the list
+names(lengthData2) <- lgDistFiles
+#Bind list into a dataframe with FileName listed
+lengthData_long <- names(lengthData2) %>% lapply(function(x){data_frame(FileName = x, lengths = lengthData2[[x]])}) %>% bind_rows()
+#edit FileNames to include only the sampleID and genome
+lengthData_long$FileName <- gsub('alnData/results_', '', lengthData_long$FileName)
+lengthData_long$FileName <- gsub('_split/lgdistribution.txt', '', lengthData_long$FileName)
+#Reshape data to separate SRR# and genome into separate vectors
+lengthData_long <- lengthData_long %>% 
+  mutate(Genome = str_extract(FileName, "(aoris|pgingivalis|ppropionicum|smutans|tforsythia)"), 
+         sampleID = str_replace(FileName, "_(aoris|pgingivalis|ppropionicum|smutans|tforsythia)", ""))
+
+# create graphing function
+length.boxplot <- function(df, na.rm = TRUE, ...){
+  
+  # create list of sampleID's in data to loop over 
+  sampleID_list <- unique(df$sampleID)
+  
+  # create for loop to produce ggplot2 graphs 
+  for (i in seq_along(sampleID_list)) {
+    
+    # create histogram plot for each sample in df 
+    boxplot1 <-
+      ggplot(subset(df, df$sampleID==sampleID_list[i]),
+             aes(Genome, lengths)) + 
+      geom_boxplot() +
+      theme_bw() +
+      scale_y_continuous("Average fragment length") +
+      xlab("Genome") +
+      ggtitle(paste(sampleID_list[i], ' Average Fragment Lengths by Genome'))
+
+    print(boxplot1)
+  }
+}
+
+# run graphing function on long df
+length.boxplot(lengthData_long)
+```
+
+* Began subsetting misincorporation data for plotting
+
+```{r eval = FALSE}
+
+#Create a vector with desired column names
+subDataColNames <- (c("Chr", "End", "Std", "Pos", "A", "C", "G", "T", "Total", 
+                      "GtoA", "CtoT", "AtoG", "TtoC", "AtoC", "AtoT", "CtoG", 
+                      "CtoA", "TtoG", "TtoA", "GtoC", "GtoT"))
+
+#Read in first file and edit to include only essential information
+read_delim("alnData/results_SRR2075423_aoris_split/misincorporation.txt", delim = "\t", skip = 4, col_names = FALSE) %>% 
+  select(1:21) %>% filter(X5 > 0) %>% set_colnames(subDataColNames)
+
+```
+
+#May 16
+
+Aligned Elsidron1 and Modern samples against concatenated fasta file containing 10 bacterial genomes.
+Was able to split files with exception of M oralis as this consists of 136 contigs rather than a single chromosome.
+
+Discovered can use awk to filter the bam output as follows:
+
+```{bash eval = FALSE}
+#Generate new bam file containing reads that do not align to A oris or P gingivalis
+samtools view -h 2NoAdapt_ELSIDRON1L7_lTACTG_rCTCGA_rmdup.bam | awk '{if($3 != "NZ_CP014232.1" && $3 != "NC_010729.1"){print $0}}' | samtools view -Sb > outfile.bam
+#Continue until only the reads aligning with M oralis remain in the bam file
+samtools view -h outfile.bam | awk '{if($3 != "NC_004350.2" && $3 != "NC_016610.1" && $3 != "NZ_CP012196.1"){print $0}}' | samtools view -Sb > outfile2.bam
+samtools view -h outfile2.bam | awk '{if($3 != "NC_003454.1" && $3 != "NC_002967.9" && $3 != "NC_023036.2" && $3 != "NZ_GG688422.1"){print $0}}' | samtools view -Sb > Elsidron1_moralis_split.bam
+```
+
+Repeated the above for Modern sample
+
+```{bash eval = FALSE}
+samtools view -h 2NoAdapt_ModernL7_lAAGAG_rNONE_rmdup.bam | awk '{if($3 != "NZ_CP014232.1" && $3 != "NC_010729.1" && $3 != "NC_004350.2" && $3 != "NC_016610.1" && $3 != "NZ_CP012196.1" && $3 != "NC_003454.1" && $3 != "NC_002967.9" && $3 != "NC_023036.2" && $3 != "NZ_GG688422.1"){print $0}}' | samtools view -Sb > ModernL7_moralis_split.bam
+```
+
+#May 17
+
+Generated a script to count number of reads in each file at different qualtity scores
+
+```{bash eval = FALSE}
+#!/bin/bash
+
+#count merged_fastq and _rmdup.bam and _split.bam files
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+ALNDIR=$ROOTDIR/weyrich/alnData
+
+########### Count merged Reads ###############
+
+#Change into directory where Collapsed_fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to trimData directory"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#Generate text file for storing merged count data
+if [ ! -f collapsed_read_count.txt ]
+then
+  echo -e 'Creating file collapsed_read_count.txt'
+  echo -e 'fileName\t#collapsedReads' > collapsed_read_count.txt
+else
+  echo  'collapsed count file already exists'
+fi
+
+#Count merged reads in fastq files and print to text file
+for Collapsed_fastq in *_Collapsed.fastq.gz
+  do
+    echo "Counting number of merged reads in ${Collapsed_fastq}"
+    MERGECOUNT=$(zcat ${Collapsed_fastq} | egrep -c '^@M_HWI')
+    echo -e "${Collapsed_fastq%%.fastq.gz}\t${MERGECOUNT}" >> collapsed_read_count.txt
+  done
+
+########## Count aligned reads ############
+
+#Change into directory where aln_files located
+if [ -d ${ALNDIR} ]
+then
+  echo "Changing to alnData directory"
+  cd ${ALNDIR}
+else
+  echo "Cannot find ${ALNDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f aligned_read_count.txt ]
+then
+  echo -e 'Creating file aligned_read_count.txt'
+  echo -e "fileName\t#alnReads\t#alnReadsQ>10\t#alnReadsQ>20\t#alnReadsQ>30" > aligned_read_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count total number of reads aligned at different quality scores
+for bam_file in *.bam
+  do
+    echo "Counting reads in ${bam_file}"
+    ALNCOUNT=$(samtools view -c ${bam_file})
+    ALNCOUNTQ10=$(samtools view -q 10 -c ${bam_file})
+    ALNCOUNTQ20=$(samtools view -q 20 -c ${bam_file})
+    ALNCOUNTQ30=$(samtools view -q 30 -c ${bam_file})
+    echo -e "${bam_file%%.bam}\t${ALNCOUNT}\t${ALNCOUNTQ10}\t${ALNCOUNTQ20}\t${ALNCOUNTQ30}" >> aligned_read_count.txt
+  done
+
+```
+
+* Ran bahs script to loop mapDamage2 on all of the *_split.bam files
+
+```{bash eval = FALSE}
+```
+
+* Imported, manipulated and plotted count data
+
+#May 18
+
+* Generate all length data plots and initial substitution data plots for all 20 _split.bam files
+
+
