@@ -1,0 +1,677 @@
+---
+title: "Research Methods April"
+author: "Jacqueline Rehn"
+date: "5/18/2017"
+output: html_document
+---
+
+###March 29
+
+Downloaded data from Ziesemer (2015) study to VM using commands:
+
+```{bash eval=FALSE}
+fastq-dump --gzip --split-3 SRR####
+```
+
+---
+
+###April 3
+
+Ran fastqc report on SRA data from Ziesemer (2015) study to confirm data already adapter trimmed and quality filtered.
+
+```{bash eval=FALSE}
+#To Run fastqc
+fastqc SRR2075490_1.fastq.gz
+#To view results
+open SRR2075490_1_fastqc.html
+```
+
+**FastQC Report Summary**
+SRA shotgun data: _Ziesemer, 2015_
+
+|Filename|Encoding|Total # Seq|Low Qual Seq|Seq Length|Adaptercontent|
+|:-------|:-------|:----------|:-----------|:---------|:-------------|
+|SRR2075503_1|Sanger|17121|0|25-98|0|
+|SRR2075503_2|Sanger|17121|0|25-98|0|
+|SRR2075423_1|Sanger|21563|0|25-98|0|
+|SRR2075423_2|Sanger|21563|0|25-98|0|
+|SRR2075431_1|Sanger|27845|0|25-98|0|
+|SRR2075431_2|Sanger|27845|0|25-98|0|
+|SRR2075490_1|Sanger|19078|0|25-98|0|
+|SRR2075490_2|Sanger|19078|0|25-98|0|
+
+---
+
+###April 11
+
+####**Tasks to complete**  
+* ~~First presentation~~  
+* ~~Read up on bash control structures~~ [link] (https://link-springer-com.proxy.library.adelaide.edu.au/book/10.1007/978-1-4302-6829-1/page/1)  
+* Write for loop to align sample files for each bacterial genome  
+
+bwa alignment script
+```{bash eval=FALSE}
+#!/bin/bash
+
+#bwaMap_count_sort_rmdup_mapDamage
+
+#USAGE: Align to reference genome (assuming index built), count aligned reads, sambamba sort and rmdup, run mapDamage
+
+#Specify variables
+ROOTDIR=/home/a1698312
+MERGEDIR=$ROOTDIR/ziesemer/mergedData
+ALNDIR=$ROOTDIR/ziesemer/pgingivalis
+
+################## BWA Alignment #########################
+
+#Change into directory where fastq files located
+if [ -d ${MERGEDIR} ]
+then
+  echo "Changing to mergedData directory"
+  cd ${MERGEDIR}
+else
+  echo "Cannot find ${MERGEDIR}"
+exit1
+fi
+
+#bwa alignment of merged reads
+for mergefile in *_MERGED.fastq.gz
+do
+  echo "Aligning $mergefile"
+  bwa aln -n 0.01 -o 2 -l 1024 -t 4 $ALNDIR/pgingivalisbwaidx $mergefile > $ALNDIR/${mergefile/%_MERGED.fastq.gz/_pgingivalis_MAPPED.sai}
+done
+
+#Change into directory where .sai files located
+if [ -d ${ALNDIR} ]
+then
+  echo "Changing to ${ALNDIR}"
+  cd ${ALNDIR}
+else
+  echo "Cannot find ${ALNDIR}"
+exit1
+fi
+```
+
+Issue with next command for **bwa-samse**. Requires input of two files in different directories with the same base name but different suffixes. 
+
+_Rick_ sent script to review to go through these tasks.
+
+_Chantelle_ suggested:
+ 1. outputting the _.sai_ alignment files to the same directory as the merged data  
+ 2. run **bwa samse** in the **mergedData** directory with similar code as below but output the bam file in the new directory  
+ 3. remove _.sai_ files from **mergedData** directory so they do not impeded future alignments  
+
+```{bash eval=FALSE} 
+for FQGZ in $DIR/*_Trimmed1.fastq.gz
+ do
+   hisat2 -x VV_12x_genome -p 3 \
+          -1 $FQGZ \
+          -2 ${FQGZ/Trimmed1/Trimmed2} | \
+            samtools view -bS - > ${FQGZ}.hisat2_VV12x.bam
+```
+
+---
+
+###April 12
+
+####Tasks to complete
+* ~~Read through script _Rick_ emailed~~  
+* ~~Compare **bear** and **Rmarkdown** for research notes~~  
+* Complete script to align_count_sort_rmdup_mapDamage  
+* Find resources for ggplot to read through  
+
+When writing command to add PREFIX/SUFFIX to output filename:
+* using %% will select from within a variable up until the %% symbol e.g.
+    export ver=aaarrr
+    echo "${ver%%r*}"
+    aaa
+* Enclosing characters in double quotes (") preserves the literal value of all characters within the quotes, with the exception of $, `, \,
+
+Wrote Script to extract merge data from log files:
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#ExtractMergeData.sh
+
+#Create a text file for merged file data
+if [ ! -f merged_read_count.txt ]
+then
+  echo -e 'Creating file merged_read_count.txt'
+  echo -e 'fileName\tnumberPairs\tnumberJoined\t%Joined\tavgInsert\tinsertRange' > merged_read_count.txt
+else
+  echo  'merged_read_count file already exists'
+fi
+
+#Extract data about each of the merged files
+for mergedLog in *_mergedLog.txt
+do
+  echo "Extracting data from $mergedLog"
+  PAIRS=$(cat ${mergedLog} | sed -n '9 p' | cut -d: -f2)
+  JOINED=$(cat ${mergedLog} | sed -n '10 p' | cut -d: -f2)
+  AVG_INSERT=$(cat ${mergedLog} | sed -n '15 p' | cut -d: -f2)
+  INSERT_RANGE=$(cat ${mergedLog} | sed -n '19 p' | cut -d: -f2)
+  echo -e "${mergedLog}\t${PAIRS}\t${JOINED}\t${AVG_INSERT}\t${INSERT_RANGE}" >> merged_read_count.txt
+done
+```
+
+Wrote and tested code to align, produce bam file, sort and rmdup from bam file, as well as count total and primary alignments:
+
+```{bash eval = FALSE}
+#!/bin/bash
+
+#bwaMap_count_sort_rmdup_mapDamage
+
+#USAGE: Align to reference genome (assuming index built), count aligned reads, sambamba sort and rmdup, run mapDamage
+
+#Specify variables
+REF=pgingivalis
+ROOTDIR=/home/a1698312
+MERGEDIR=$ROOTDIR/ziesemer/mergedData
+ALNDIR=$ROOTDIR/ziesemer/$REF
+
+################## BWA Alignment #########################
+
+#Change into directory where fastq files located
+if [ -d ${MERGEDIR} ]
+then
+  echo "Changing to mergedData directory"
+  cd ${MERGEDIR}
+else
+  echo "Cannot find ${MERGEDIR}"
+exit1
+fi
+
+#bwa alignment of merged reads
+for merge_file in *_MERGED.fastq.gz
+do
+  echo "Aligning $merge_file to $REF"
+  bwa aln -n 0.01 -o 2 -l 1024 -t 4 $ALNDIR/"$REF"bwaidx $merge_file > ${merge_file/%_MERGED.fastq.gz/_"$REF"_MAPPED.sai}
+done
+
+#Convert .sai alignment file to bam format with the sam header.
+##Exclude unmapped reads
+for aln_file in *_"$REF"_MAPPED.sai
+  do
+    echo "Converting ${aln_file} to bam format"
+    PREFIX=${aln_file%%_"$REF"*}
+    bwa samse $ALNDIR/"$REF"bwaidx \
+              ${PREFIX}_"$REF"_MAPPED.sai \
+              ${PREFIX}__MERGED.fastq.gz | \
+                samtools view -bSh -F0x4 -> $ALNDIR/${PREFIX}_"$REF"_bwa.bam
+  done
+
+#Remove .sai files as no longer needed
+rm *_"$REF"_MAPPED.sai
+
+#Change into directory where .bam files located
+if [ -d ${ALNDIR} ]
+then
+  echo "Changing to ${ALNDIR}"
+  cd ${ALNDIR}
+else
+  echo "Cannot find ${ALNDIR}"
+exit1
+fi
+
+################### sambamba sort and rmdup #####################
+
+for bam_file in *_"$REF"_bwa.bam
+do
+  PREFIX2=${bam_file%%_"$REF"*}
+  echo "Sorting bam file for ${bam_file}"
+  sambamba sort -o ${PREFIX2}_"$REF"_sorted.bam ${bam_file}
+done
+
+for sortdata in *_"$REF"_sorted.bam
+do
+  PREFIX3=${sortdata%%_"$REF"*}
+  echo "Removing duplicates ${sortdata}"
+  sambamba markdup -r ${sortdata} ${PREFIX3}_"$REF"_rmdup.bam 2> ${PREFIX3}_"$REF"_sambambaLog.txt
+done
+
+#Remove _sorted.bam.bai files
+rm *_"$REF"_sorted.bam.bai
+
+################# Aligned read count for genome #################
+
+#Generate text file for storing alignment count data
+if [ ! -f "$REF"_read_count.txt ]
+then
+  echo -e 'Creating file "$REF"_read_count.txt'
+  echo -e 'fileName\ttoalAlignmentCount\tprimaryAlignmentCount' > "$REF"_read_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count number of reads which aligned to genome
+#Count number of primary alignments in each bam file using SAM flag -F256 'ignore all but primary alignment'
+for bam_file in *"$REF"_bwa.bam
+  do
+    echo "Counting total and primary alignments for ${bam_file}"
+    TOT_ALN_COUNT=$(samtools view -c ${bam_file})
+    PRI_ALN_COUNT=$(samtools view -F256 -c ${bam_file})
+    echo -e "${bam_file}\t${TOT_ALN_COUNT}\t${PRI_ALN_COUNT}" >> "$REF"_read_count.txt
+  done
+```
+
+---
+
+###April 13
+
+####Tasks to complete
+* Review parameters for bwa - am I using semi global alignment
+* Produce mapDamage files
+* Produce histogram for merged data lengths
+
+*Semi-global alignment*
+* article by _Schubert et al., 2012_ desribes bwa as semi-global aligner
+* all parameters used by myself match those specified in article
+* describe in methods these parameters and why semi-global alignment required
+* one concern is that article specifies high quality hits as:
+  + "_uniquely mapped reads, as specified by the XT tag, having a mapping quality of at least 25, and no suboptimal alternative hits as specified by the X1 tag_"
+  + my quality scores are 0 - *is this a concern?*
+
+*mapDamage*
+* added loop to script to process bam files through mapDamage
+* Ran entire script (align_sort_rmdup_mapDamage) for all 4 samples using _P gingivalis_ genome
+* Total runtime < 30 mins with mapDamage command the longest to process
+
+```{bash eval = FALSE}
+################ mapDamage #########################
+
+for rmdup_bam_file in *_"$REF"_rmdup.bam
+  do
+    echo "Running mapDamage on ${rmdup_bam_file}"
+    mapDamage -i ${rmdup_bam_file} -r $ALNDIR/$FASTAFILE
+  done
+```
+
+*bbmerge*
+* bbmerge can also produce histogram data for read length
+* wrote script to use for merging files that will produce:
+  + MERGED read file
+  + UNMERGED read file
+  + ihist file
+  + standard error output with information on proportion of reads merged etc.
+  
+```{bash eval = FALSE}
+#!/bin/bash
+
+#bbmerge_mergePEreads
+
+#Usage: Merge a pair of PE reads, output both the merged and unmerged reads plus a log file containing merge data
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/ziesemer/fastq
+MERGEDIR=$ROOTDIR/ziesemer/mergedData
+
+#Change into directory where trimmed fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to trimmedData directory"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#Merge PE reads
+
+for fastq in *_1.fastq.gz
+  do
+    echo "Merging ${fastq}"
+    PREFIX=${fastq%%_1.fastq.gz}
+    bbmerge.sh in=${PREFIX}_1.fastq.gz in2=${PREFIX}_2.fastq.gz \
+    out=$MERGEDIR/${PREFIX}_MERGED.fastq.gz outu=$MERGEDIR/${PREFIX}_UNMERGED.fastq.gz \
+    ihist=$/MERGEDIR/${PREFIX}_ihist.txt 2> $MERGEDIR/${PREFIX}_mergeLog.txt
+  done
+```
+
+*R plots*
+*Steve assisted in producing code to read-in data from a text file and plot:
+
+```{r eval = FALSE}
+library(dplyr)
+library(readr)
+library(magrittr)
+library(tibble)
+library(ggplot2)
+
+allFiles <- list.files("mergedData/", pattern = "hist", full.names = TRUE)
+
+allData <- allFiles %>%
+  lapply(function(x){
+    read_delim(x, delim = "\t", skip = 6, col_names = FALSE) %>% 
+      set_colnames(c("InsertSize", "Count")) %>%
+      mutate(FileName = x)
+  }) %>%
+  bind_rows()
+
+allData %>%
+  mutate(FileName = gsub("mergedData//(.+)_ihist.txt", "\\1", FileName)) %>%
+  ggplot(aes(x = InsertSize, y = Count, fill = FileName)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~FileName) +
+  guides(fill = FALSE) +
+  theme_bw()
+```
+
+*Unanswered Questions*
+* What proportion of reads map to each genome selected
+  + _Campylobacter curves_ NC_009715.2
+  + _Pseudopropionibacterium propionicum_ NC_018142
+  + _Actinomyces oris_ NZ_CP014232.1
+  + _Tannerella forsythia_ NC_016610.1
+  + _Streptococcus mutans_ NC_004350
+  + _Porphyromonas gingivalis_ NC_002950
+* What is the mapping quality of the merged aligned reads?
+* Are reads aligning to multiple genomes due to conserved sequences?
+* Can the length of reads be determined from the alignment file?
+* Should I modify the mapDamage parameters?
+
+---
+
+###April 18
+
+Generated code for geom_bar plot of fragment lengths using ggplot2
+* Learnt to show overall data or data based on strand samples
+* Learnt to replace labels for x and y axis as well as add title
+* Able to change the column width
+
+```{r eval = FALSE}
+#load packages
+library(plyr)
+library(dplyr)
+library(readr)
+library(magrittr)
+library(tibble)
+library(ggplot2)
+library(reshape2)
+
+#Read text lgdistribution.txt file into a datafram
+pging.423.lg.dist <- read_delim("pgingivalis/results_SRR2075423_pgingivalis_rmdup/lgdistribution.txt",
+                                     delim = "\t", skip = 4, col_names = FALSE) %>%
+                                set_colnames(c("Std", "Length", "Occurences"))
+
+#Verify column names of dataframe
+names(pging.423.lg.dist)
+#[1] "Std"         "Length"      "Occurences "
+
+#Reorder column variables
+pging.423.lg.dist <- pging.423.lg.dist[,c(2,3,1)]
+
+#plot fragment length distribution regardless of strand
+pging.423.lg.dist %>%
+ggplot(aes(x = Length, y = Occurences)) +
+  geom_bar(width = .5, stat = "identity") +
+  theme_bw()
+
+#plot fragment length distribution, specifying strand occurence
+pging.423.lg.dist %>%
+  ggplot(aes(x = Length, y = Occurences, fill = Std)) +
+  geom_bar(width = .5, stat = "identity") +
+  xlab("Fragment length") + ylab("Number of occurences") +
+  ggtitle("Fragment length distribution for P. gingivalis\nin sample SRR2075423") +
+  theme_bw()
+```
+
+*Future Tasks*
+* Learn how to loop over several files to produce multiple fragment length distribution plots (lapply)
+* Learn how to extract mean fragment length and standard deviation from data
+
+----
+
+###April 19
+
+*Tasks to complete*
+* Business case workshop
+* Brainstorm ideas for business case presentation
+* Produce box-plot summarising read length for reads aligning to _P gingivalis_
+
+*box-plots and collation of data frame to get summary stats*
+Was able to aggregate fragment length data from + and - strand using:
+
+```{r eval = FALSE}
+#remove column with strand ID
+pging.423.lg.dist.summary <- pging.423.lg.dist[,c(1,2)]
+#confirm desired result
+print(pging.423.lg.dist.summary)
+#Sum multiple occurences of Length
+pging.423.lg.dist.sum <- pging.423.lg.dist.summary %>%
+  group_by(Length) %>%
+  summarise_each(funs(sum))
+```
+
+Data could not be plotted in this form as each column in data frame considered a separate vector and plotted separately.
+
+Converted data into vector with individual fragment lengths to use in box-plot. Summary statistics can also be calculated using the vector:
+```{r eval = FALSE}
+#Produce vector of individual fragment lengths
+pging.423.frag.length <- rep(pging.423.lg.dist.sum$Length, pging.423.lg.dist.sum$Occurences)
+#Perform basic statistics (mean, meadian, quartiles etc.)
+summary(pging.423.frag.length)
+#boxplot pging.423.frag.length vector
+boxplot(pging.423.frag.length)
+```
+
+*Collate all pgingivalis lgdistribution files into 1 data frame*
+* First had to rename lgdistribution files with SRR# up front and move into same directory
+* Steve assisted with code
+
+```{r eval = FALSE}
+#Create a list of lgdistribution file names
+pging.lengthFiles <- list.files("pgingivalis/", pattern = "lgdistribution", full.names = TRUE)
+#Use lapply to read each text file into a data frame and bind together
+pging.lengthData <- pging.lengthFiles %>%
+  lapply(function(x){
+    read_delim(x, delim = "\t", skip = 4, col_names = FALSE) %>%
+      set_colnames(c("Std", "Length", "Occurences")) %>%
+      mutate(FileName = x)
+  }) %>%
+  bind_rows
+
+#Plot all 4 fragment length distribution plots using facet_wrap(~FileName)
+pging.lengthData %>% mutate(FileName = basename(FileName)) %>%
+     ggplot(aes(x = Length, y = Occurences, fill = Std)) +
+     geom_bar(width = .5, stat = "identity") +
+     xlab("Fragment length") + ylab("Number of occurences") +
+     ggtitle("Fragment length distribution for P. gingivalis") +
+     theme_bw() + facet_wrap(~FileName)
+```
+
+---
+
+###April 20
+
+*Tasks to Complete*
+* Business case workshop
+* Write script to rename and move files required files for R analysis
+
+*Script to move/rename mapDamage txt files*
+```{bash eval = FALSE}
+#!/bin/bash
+
+#rename_move_txt_files
+
+#USAGE:Rename lgdistribution & misincorporation files in results folders with \
+  # the SRR# and move to genome folder ready for importing into R
+
+#Specify variables
+REF=pgingivalis
+ROOTDIR=/home/a1698312
+ALNDIR=$ROOTDIR/ziesemer/$REF
+
+#outer loop: for each directory beginning with 'results_'
+for d in $ALNDIR/results_*
+  do
+  #assign a variable describing the SRR# from directory name
+    BASENAME=${d%%_"$REF"*}
+  #test to confirm variable $d is a directory and if this TRUE change into it
+    [ -d $d ] && cd "$d" && echo Entering into $d || echo $d not found
+  #inner loop: for each file ending with '.txt'
+    for f in *.txt
+      do
+  #move the file to the "REF" genome folder adding basename to start of file name
+        mv $f /$ALIDIR/${BASENAME}_"$f"
+        echo -e "moving ${BASENAME}_"$f""
+  #finish inner loop
+      done
+  #finish outer loop
+  done
+```
+
+---
+
+###April 21
+
+*Tasks to Complete*
+* IP Research for business case presentation
+* Produce box-plot comparing average fragment lengths aligning to _P gingivalis_ for each sample
+
+Previous plot produced for single sample used a vector of all fragment lengths. Attempted to use same commands but on a list of dataframes. 
+
+Discovered that I could not use the rep() function on the list I created as a list the data in a list are not considered integer values.
+
+```
+pging.lengthSum <- lapply(pging.fragLength, function(x) { 
+   rep(x[1],x[2])
+ })
+Error in FUN(X[[i]], ...) : 
+  (list) object cannot be coerced to type 'integer'
+```
+
+May need to read-in each file individually and convert to a vector that can then be bound together for plotting.
+Using a for loop may be helpful.
+
+Code for individual sample:
+
+```{r eval = FALSE}
+######pging 2075431 fragment length data###
+
+#read in txt file
+pging.431.lg.dist <- read_delim("pgingivalis/SRR2075431.lgdistribution.txt",
+                                delim = "\t", skip = 4, col_names = FALSE) %>%
+  set_colnames(c("Std", "Length", "Occurences"))
+
+#Remove 'std' column
+lg.stats.pging.431 <- pging.431.lg.dist[,c(2,3)]
+#Sum multiple occurences of Length
+lg.stats.pging.431 %>%
+  group_by(Length) %>%
+  summarise_each(funs(sum))
+#convert to vector & generate box plot + summary statistics 
+lg.stats.pging.431 <- rep(lg.stats.pging.431$Length, lg.stats.pging.431$Occurences)
+#generage boxplot
+boxplot(lg.stats.pging.431)
+```
+
+Code to produce plot comparing fragment lengths for all sample reads aligning to _P. gingivalis_
+
+```{r eval = FALSE}
+#Plot each of the 4 vectors against each other
+#Create character vector with names of vectors wish to plot
+pging.vectors <- c("lg.stats.pging.423", "lg.stats.pging.431", "lg.stats.pging.490", "lg.stats.pging.503")
+#make a datalist of these vectors
+pging.frag.data <- lapply(pging.vectors, get, envir=environment())
+names(pging.frag.data) <- pging.vectors
+boxplot(pging.frag.data, main = "P gingivalis Fragment Lengths",
+        ylab = "DNA Fragment Length", xlab = "SRR Sample Number", 
+        names = c("2075423", "2075431", "2075490", "2075503"))
+```
+
+---
+
+###April 26
+
+In order to avoid constant _copy & paste_, attempted to write functions to:
+
+1. Import data
+2. Convert imported data to a vector of individual lengths for plotting:
+
+*import of data*
+Function - Saved as read.in.file.R
+```{r eval = FALSE}
+#function for reading in txt file
+
+read.in.file <- function(absolutePath) {
+  read_delim(absolutePath,
+             delim = "\t", skip = 4, col_names = FALSE) %>%
+    set_colnames(c("Std", "Length", "Occurences"))
+}
+```
+
+Used function to read-in files:
+```{r eval = FALSE}
+#Read in each text file as an individual object
+source("read.in.file.R")
+tfors.423.lgdist <- read.in.file("~/ziesemer/lengthData/tforsythia_SRR2075423_lgdistribution.txt")
+tfors.431.lgdist <- read.in.file("~/ziesemer/lengthData/tforsythia_SRR2075431_lgdistribution.txt")
+tfors.490.lgdist <- read.in.file("~/ziesemer/lengthData/tforsythia_SRR2075490_lgdistribution.txt")
+tfors.503.lgdist <- read.in.file("~/ziesemer/lengthData/tforsythia_SRR2075503_lgdistribution.txt")
+```
+
+*Create vector of fragment lengths*
+Function - saved as make.length.vector.R
+```{r eval = FALSE}
+#function to generate length vector data
+
+length.data <- function(object) {
+  #Remove 'std' column
+  object <- object[,c(2,3)]
+  #Sum multiple occurences of Length
+  #lg.stats.pging.503 %>%
+    #group_by(Length) %>%
+    #summarise_each(funs(sum))
+  #convert to vector & generate box plot + summary statistics 
+  object <- rep(object$Length, object$Occurences)
+}
+```
+
+Applied to _T forsythia_ lgdistribution files as follows:
+```{r eval = FALSE}
+#create vectors
+source("make.length.vector.R")
+tfors.vector.423 <- length.data(tfors.423.lgdist)
+tfors.vector.431 <- length.data(tfors.431.lgdist)
+tfors.vector.490 <- length.data(tfors.490.lgdist)
+tfors.vector.503 <- length.data(tfors.503.lgdist)
+```
+
+Plot _T forsythia_ length data
+```{r eval = FALSE}
+#Create character vector with names of vectors wish to perform statistics
+tfors.vector.list <- c("tfors.vector.423", "tfors.vector.431", "tfors.vector.490", "tfors.vector.503")
+#Generate summary statistics for each vector in the list
+tfors.lg.data <- lapply(tfors.vector.list, get, envir=environment())
+names(tfors.lg.data) <- tfors.vector.list
+tfors.length.stats <- sapply(tfors.lg.data, summary)
+tfors.length.stats
+#Plot the tfors length data
+boxplot(tfors.length.stats, range = 0, main = "T forsythia Fragment Lengths",
+        ylab = "DNA Fragment Length", xlab = "SRR Sample Number", 
+        names = c("2075423", "2075431", "2075490", "2075503"))
+```
+
+---
+
+###April 27
+
+*Read Alignment Summary*
+Count of reads from _Ziesemer, 2015_ aligned to each genome
+
+|Sample Number|Merged Read Count|A oris|
+|:------------|:----------------|:-----|
+|SRR2075423|21572|1445|
+|SRR2075431|27845|1599|
+|SRR2075490|19078|1330|
+|SRR2075503|17121|1377|
+
+Can't use data in genome_read_count.txt as it counted original .bwa.bam file not 
+the sorted_rmdup.bam file.
+
+Go back and re-count. In meantime above totals for each genome calculated from sambambaLog.txt. These totals match the vector lengths for the files.
+
+Should also count the number of reads in original merged files rather than calculate from MergedLog.txt as above.
+
