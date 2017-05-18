@@ -944,5 +944,5 @@ for bam_file in *.bam
 #May 18
 
 * Generate all length data plots and initial substitution data plots for all 20 _split.bam files
-
+* Learn to use gitHub to save versions
 
