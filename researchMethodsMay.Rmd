@@ -946,3 +946,225 @@ for bam_file in *.bam
 * Generate all length data plots and initial substitution data plots for all 20 _split.bam files
 * Learn to use gitHub to save versions
 
+#May 19
+* Created pie charts to showcase proportion of reads aligning at different quality scores
+* Generate fragment length plots
+
+#May 22
+* Began summarising damage for Weyrich study in R markdown document
+* Included plots for count data and fragment lengths
+* Some de-bugging needed. Ensure data frames are fully edited at the beginning so that FileNames are consistent, and all code for re-shaping is present in the R document
+* Counted number of reads in each split file to use for normalization of fragment length data
+
+```{bash eval = FALSE}
+#!/bin/bash
+
+#count merged_fastq and _rmdup.bam and _split.bam files
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+ALNDIR=$ROOTDIR/weyrich/alnData
+QUALALNDIR=$ROOTDIR/weyrich/highQualAlnData
+
+##############Count aligned reads in split.bam files################
+
+#Change into directory where aln_files located
+if [ -d ${ALNDIR} ]
+then
+  echo "Changing to alnData directory"
+  cd ${ALNDIR}
+else
+  echo "Cannot find ${ALNDIR}"
+exit1
+fi
+
+#Generate text file for storing split alignment count data
+if [ ! -f split_aligned_read_count.txt ]
+then
+  echo -e 'Creating file split_aligned_read_count.txt'
+  echo -e "fileName\t#alnReads" > split_aligned_read_count.txt
+else
+  echo  'split_aligned_read_count.txt already exists'
+fi
+
+#Count total number of reads aligned in each split file with no quality filtering
+for split_file in *split.bam
+  do
+    echo "Counting reads in ${split_file}"
+    SPLITCOUNT=$(samtools view -c ${split_file})
+    echo -e "${split_file%%_split.bam}\t${SPLITCOUNT}" >> split_aligned_read_count.txt
+  done
+
+#Change into directory where highQualAln_files located
+if [ -d ${QUALALNDIR} ]
+then
+  echo "Changing to highQualAlnData directory"
+  cd ${QUALALNDIR}
+else
+  echo "Cannot find ${QUALALNDIR}"
+exit1
+fi
+
+#Generate text file for storing split alignment count data
+if [ ! -f highQual_split_aligned_read_count.txt ]
+then
+  echo -e 'Creating file highQual_split_aligned_read_count.txt'
+  echo -e "fileName\t#alnReads" > highQual_split_aligned_read_count.txt
+else
+  echo  'highQual_split_aligned_read_count.txt already exists'
+fi
+
+#Count total number of reads aligned in each split file with -q 30 filter
+for Q30split_file in *Q30_split.bam
+  do
+    echo "Counting reads in ${Q30split_file}"
+    Q30SPLITCOUNT=$(samtools view -c ${Q30split_file})
+    echo -e "${Q30split_file%%_Q30_split.bam}\t${Q30SPLITCOUNT}" >> highQual_split_aligned_read_count.txt
+  done
+```
+
+* Plotted normalized distributions of fragment lengths for non filtered data.
+* Need to repeat for Q30 data
+* Try calculating summary statistics from vectors and plot rather than generating histogram from whole vector? Is one way preferable.
+
+#May 23
+
+Aims:
+* Plot nucleotide substitution data and identify any substitutions for further exploration. 
+* Finish plotting high qual fragment length data (compare)
+* De-bug R markdown document and complete
+* Write flow-chart for processing data (use when meet with Jimmy to discuss R package)
+
+#May 29
+
+Met with Jimmy to share code/progress. Suggestions for improvements:
+* make separate file for genome, NCBI ref location, phylum data etc
+* use this text file and a while loop to download refSeq fasta file
+* select the genome that is easiest to use (e.g. fewest scaffolds for M. oralis)
+* replace gsub commands with more concise regular expression
+* rather than remove info from fileName, split fileName into separate columns using underscore as defining point. Can then remove unnecessary variables from data frame
+* write functions into separate .R file and call them in the R markdown
+* use 'cache' to call functions from previous code chunks
+
+Additional questions to consider
+* Currently using MAPQ 30. Is this appropriate?:
+    * read-up/summarise how MAPQ calculated
+    * what is the difference between MAPQ of 25 and 30
+    * does including reads with MAPQ >24 increase sample size enough to abolish issues with skewed fragment length??
+* Are there more duplicates for lower quality MAPQ filters?
+* Adapter dimers have length of ~60bp. Could removal of this account for dips observed in length distribution?
+
+#May 31
+
+Ran following script on 6 samples from Neanderthal. Modification of previous code which takes information from a tab deliminated text file to download & name fasta files
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#USAGE: Requires trimmed_fastq files in specified directory
+#       Provide tab deliminated text file containing genome names and download links
+
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+MAPDIR=$ROOTDIR/weyrich/mapData
+#QUALALNDIR=$ROOTDIR/weyrich/highQualAlnData
+LOGFILE=$ROOTDIR/weyrich/mapDamageLog.txt
+
+
+##### create log file for script ####
+
+if [ ! -f mapDamageLog.txt ]
+then
+  echo -e 'Creating file mapDamageLog.txt'
+  echo -e "date\tmessage" > ${LOGFILE}
+  echo -e "$(date -u)\tStart of script" >> ${LOGFILE}
+else
+  echo -e 'mapDamageLog.txt already exists'
+  echo -e "$(date -u)\tStart of script" >> ${LOGFILE}
+fi
+
+##### bwa_build alignment index ####
+
+#Change into mapData directory
+if [ ! -d ${MAPDIR} ]
+then
+  echo "Creating ${MAPDIR}"
+  mkdir -p mapData
+  echo "Changing into ${MAPDIR}"
+  cd ${MAPDIR}
+else
+  echo "${MAPDIR} already exists. Changing into ${MAPDIR}"
+  cd ${MAPDIR}
+fi
+
+#Download fasta file for each genome in genomeList.txt file
+while read -r line
+do 
+  link=$(echo "${line}" | cut -f3)
+  echo "$link"
+  ref=$(echo "${line}" | cut -f1)
+  echo "$ref"
+  wget -c "$link" -O "${ref}".fna.gz
+done < ${ROOTDIR}/weyrich/genomeList.txt
+
+#Add time stamp to logfile
+echo -e "$(date -u)\tfasta files downloaded" >> ${LOGFILE}
+
+#unzip fasta files
+gunzip *fna.gz
+
+#concatenate fasta files
+cat *fna > combined.fna
+
+#build-index for alignment
+bwa index -p bwaidx combined.fna
+
+#Add time stamp to logfile
+echo -e "$(date -u)\tbwa index built" >> ${LOGFILE}
+
+##### BWA Alignment #####
+
+#Change into directory where trimmed_fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to trimData directory"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#bwa alignment of collapsed reads
+for collapsed_file in *_Collapsed.fastq.gz
+do
+  echo "Aligning ${collapsed_file}"
+  bwa aln -n 0.01 -o 2 -l 1024 -t 4 $MAPDIR/bwaidx $collapsed_file > ${collapsed_file/%_R1R2_Collapsed.fastq.gz/_MAPPED.sai}
+  echo -e "$(date -u)\tmapped ${collapsed_file}" >> ${LOGFILE}
+done
+
+#Convert .sai alignment file to bam format with the sam header. Exclude unmapped reads.
+for aln_file in *_MAPPED.sai
+  do
+    echo "Converting ${aln_file} to bam format"
+    PREFIX=${aln_file%%_MAPPED.sai}
+    bwa samse $MAPDIR/bwaidx \
+              ${PREFIX}_MAPPED.sai \
+              ${PREFIX}_R1R2_Collapsed.fastq.gz | \
+                samtools view -bSh -F0x4 -> $MAPDIR/${PREFIX}_bwa.bam
+  done
+
+#Remove .sai files as no longer needed
+#rm *_MAPPED.sai
+```
+
+
+See if read lengths in bam files is representative of average read lengths in fastq file
+
+```{bash eval=FALSE}
+zcat 2NoAdapt_ModernL7_lAAGAG_rNONE_R1R2_Collapsed.fastq.gz | awk '{if(NR%4==2) print length($1)}' | sort -n | uniq -c > read_length.txt
+```
+
+
