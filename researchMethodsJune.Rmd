@@ -1,0 +1,3338 @@
+---
+title: "Research Methods June"
+author: "Jacqueline Rehn"
+date: "6/2/2017"
+output: html_document
+---
+
+#June 1
+
+Looked at the range (min & max alignment lengths) for each genome in Mod sample
+
+```{r eval=FALSE}
+#Create a list of lengths for each genome, and determine the range in values (min & max)
+modLgDataQ30Long <- lengthDataQ30Long %>% filter(sampleID == "Modern") %>% select(lengths, genome)
+modLgRange <- split(modLgDataQ30Long, modLgDataQ30Long$genome) %>% lapply(function(x){range(x$lengths)}) %>% bind_rows()
+```
+
+Counted the mapping lengths in the modern_rmdup.bam file with following command:
+
+```{bash eval=FALSE}
+samtools view 2NoAdapt_ModernL7_lAAGAG_rNONE_rmdup.bam | awk '{print length($10)}' | sort -n | uniq -c > mapLengths.txt
+```
+
+Worked on presentation for Journal Club
+
+#June 2
+
+Read in fastqLength & mapLength text files. Created object in which #reads for specific length ranges calculated and the proportion of each length range that mapped was plotted.
+
+```{r eval=FALSE}
+######## plot lengths from fastq file #########
+
+modFastqLengths <- read.csv(file="trimData/read_length.txt", sep="", header=FALSE)
+names(modFastqLengths) <- c("occ", "length")
+#Plot
+modFastqLengths %>% ggplot(aes(x=V2, y=V1)) + geom_line() + 
+  theme_bw() + xlab("Fragment length") + ylab("Occurences")
+
+#modFastqLengths <- modFastqLengths %>% mutate(freq = V1/58956478)
+#modFastqLengths %>% sum(modFastqLengths$V1)
+#[1] 58956478
+#modFastqLenghts %>% ggplot(aes(x=V2, y=freq)) + geom_line() + theme_bw() + xlab("Fragment length") + ylab("Frequency")
+#names(modFastqLenghts) <- c("occ", "length", "freq")
+#modFastqFreq <- modFastqLenghts %>% select(length, freq)
+#generate dataframe with aligned Modern data
+#modBamLengths <- lengthDataQ30 %>% filter(sampleID == "Modern") %>% select(length, freq) %>% group_by(length) %>% 
+#  summarise_each(funs(sum)) %>% mutate(freq = freq/1165054)
+#modBamLengths <- as.data.frame(modBamLengths)
+#modFastqBamLengthData <- left_join(modBamLengths, modFastqFreq, by = "length")
+#names(modFastqBamLengthData) <- c("length", "bamFreq", "fastqFreq")
+
+#Plot both data on top of each other.
+#modFastqBamLengthData %>% ggplot(aes(x=length)) +
+#  geom_line(aes(y=bamFreq, colour="bamFreq")) +
+#  geom_line(aes(y=fastqFreq, colour="fastqFreq")) +
+#  theme_bw() +
+#  ylab("Frequency")
+
+#Compare proportion of reads which aligned at different length ranges
+mapLengths <- read.csv(file="alnData/mapLengths.txt", sep = "", header = FALSE) 
+names(mapLengths) <- c("occ", "length")
+rep(mapLengths$length, mapLengths$occ)
+
+##Convert continuous data to categorical (i.e. summarise by length)
+mapLengths$lengthRange <- cut(mapLengths$length, seq(21,191,10), right = FALSE, 
+                              labels=c("21-30", "31-40", "41-50", "51-60", "61-70", "71-80", "81-90", "91-100", 
+                                       "101-110", "111-120", "121-130", "131-140", "141-150", "151-160", "161-170", 
+                                       "171-180", "181-190"))
+#same for modFastqLengths
+modFastqLengths$lengthRange <- cut(modFastqLengths$length, seq(21,191,10), right = FALSE, 
+                                   labels=c("21-30", "31-40", "41-50", "51-60", "61-70", "71-80", "81-90", "91-100", 
+                                            "101-110", "111-120", "121-130", "131-140", "141-150", "151-160", "161-170", 
+                                            "171-180", "181-190"))
+
+#Sum occurenced within each category
+mapLengthsByRange <- mapLengths %>% select(-length) %>% group_by(lengthRange) %>% summarise_each(funs(sum))
+fastqLengthsByRange <- modFastqLengths %>% select(-length) %>% group_by(lengthRange) %>% summarise_each(funs(sum))
+#Bind both tibbles together
+modLengthRanges <- left_join(mapLengthsByRange, fastqLengthsByRange, by = "lengthRange")
+names(modLengthRanges) <- c("lengthRange", "bam", "fastq")
+modLengthRanges <- modLengthRanges %>% mutate(propMapped = bam/fastq)
+#Plot proportion mapped by length range
+modLengthRanges %>% ggplot(aes(x=lengthRange, y=propMapped)) + geom_bar(stat = "identity") + theme_bw()
+```
+
+Counted Number of reads in fastq files as well as reads in bwa.bam files at different MAPQ scores using:
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#count merged_fastq and _rmdup.bam and _split.bam files
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+QUALALNDIR=$ROOTDIR/weyrich/highQualAlnData
+MAPDIR=$ROOTDIR/weyrich/mapData
+
+########### Count merged Reads ###############
+
+#Change into directory where Collapsed_fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to trimData directory"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#Generate text file for storing merged count data
+if [ ! -f fastq_read_count.txt ]
+then
+  echo -e 'Creating file fastq_read_count.txt'
+  echo -e 'fileName\t#Reads' > fastq_read_count.txt
+else
+  echo  'fastq count file already exists'
+fi
+
+#Count merged reads in fastq files and print to text file
+for Collapsed_fastq in *_Collapsed.fastq.gz
+  do
+    echo "Counting number of merged reads in ${Collapsed_fastq}"
+    MERGECOUNT=$(zcat ${Collapsed_fastq} | egrep -c '^@M_HWI')
+    echo -e "${Collapsed_fastq%%_R1R2_Collapsed.fastq.gz}\t${MERGECOUNT}" >> fastq_read_count.txt
+  done
+
+########## Count aligned reads ############
+
+#Change into directory where aln_files located
+if [ -d ${MAPDIR} ]
+then
+  echo "Changing to mapData directory"
+  cd ${MAPDIR}
+else
+  echo "Cannot find ${MAPDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f bam_read_count.txt ]
+then
+  echo -e 'Creating file bam_read_count.txt'
+  echo -e "#Reads  MAPQ" > bam_read_count.txt
+else
+  echo  'Bam count file already exists'
+fi
+
+#Count total number of reads aligned at different quality scores
+for bam_file in *.bam
+  do
+    echo "Counting reads in ${bam_file}"
+    MAPCOUNT=$(samtools view ${bam_file} | cut -f5 | sort | uniq -c)
+    echo -e "${bam_file}" >> bam_read_count.txt
+    echo -e "${MAPCOUNT}" >> bam_read_count.txt
+  done
+
+```
+
+Read data from the bam_read_count.txt and plotted as bar graph:
+
+```{r eval = FALSE}
+#Read in csv file
+bamCount <- read.csv(file="mapData/bam_read_count.txt", sep="", skip = 1, header = FALSE)
+#Split at .bam to generate a list
+MAPQcount <- bamCount %>% mutate(bam = grepl("bam", V1), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#names(MAPQcount) <- c("Chimp", "Elsidron1", "Elsidron2", "Modern", "SpyII", "SpyI")
+MAPQcount <- MAPQcount %>% bind_rows() %>% select(-bam) %>% filter(V2 != "NA")
+MAPQcount$fileNo <- gsub('1', 'Chimp', MAPQcount$fileNo)
+MAPQcount$fileNo <- gsub('2', 'Elsidron1', MAPQcount$fileNo)
+MAPQcount$fileNo <- gsub('3', 'Elsidron2', MAPQcount$fileNo)
+MAPQcount$fileNo <- gsub('4', 'Modern', MAPQcount$fileNo)
+MAPQcount$fileNo <- gsub('5', 'SpyII', MAPQcount$fileNo)
+MAPQcount$fileNo <- gsub('6', 'SpyI', MAPQcount$fileNo)
+names(MAPQcount) <- c("count", "MAPQ", "sampleID")
+MAPQcount %>% mutate_if(is.factor, as.character) -> MAPQcount
+MAPQcount$count <- as.numeric(MAPQcount$count)
+#plot proportion of reads at different MAPQ scores
+MAPQcount %>% select(-MAPQ) %>% group_by(sampleID) %>% summarise_each(funs(sum)) %>% 
+  left_join(MAPQcount, by = "sampleID") %>% mutate(prop = count.y/count.x) %>% 
+  ggplot(aes(x=MAPQ, y=prop)) + 
+  geom_bar(stat = "identity") + 
+  theme_bw() + 
+  facet_wrap(~sampleID)
+```
+
+Sorted bwa.bam files and removed duplicates:
+
+```{bash eval=FALSE}
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+MAPDIR=$ROOTDIR/weyrich/mapData
+LOGFILE=$ROOTDIR/weyrich/mapDamageLog.txt
+
+################### sambamba sort and rmdup #####################
+
+#Change into directory where .bam files located
+if [ -d ${MAPDIR} ]
+then
+  echo "Changing to ${MAPDIR}"
+  cd ${MAPDIR}
+else
+  echo "Cannot find ${MAPDIR}"
+exit1
+fi
+
+for bam_file in *_bwa.bam
+do
+  PREFIX2=${bam_file%%_bwa.bam}
+  echo "Sorting bam file for ${bam_file}"
+  sambamba sort -o ${PREFIX2}_sorted.bam ${bam_file}
+done
+
+for sort_file in *_sorted.bam
+do
+  PREFIX3=${sort_file%%_sorted.bam}
+  echo "Removing duplicates ${sort_file}"
+  sambamba markdup -r ${sort_file} ${PREFIX3}_rmdup.bam 2> ${PREFIX3}_sambambaLog.txt
+done
+
+#Remove _sorted.bam.bai files as no longer needed
+rm *_sorted.bam.bai
+#Remove _sorted.bam files as no longer needed
+rm *_sorted.bam
+```
+
+Counted and plotted proportion of reads at different MAPQ after duplicate removal
+
+```{r eval=FALSE}
+#Read-in data for read counts at MAPQ scores after rmdup
+rmdupCountFiles <- list.files("mapData", pattern = "_rmdup_count.txt", full.names = TRUE)
+rmdupMAPQ <- rmdupCountFiles %>% lapply(function(x){read.csv(x, sep="", skip = 1, header=FALSE) %>% 
+    set_colnames(c("#reads", "MAPQ")) %>% mutate(fileName = x)}) %>% bind_rows()
+#manipulate data and plot proportion of reads at different MAPQ scores
+rmdupMAPQ %>% select(-MAPQ) %>% group_by(fileName) %>% summarise_each(funs(sum)) %>% 
+  left_join(rmdupMAPQ, by = "fileName") %>% mutate(prop = `#reads.y`/`#reads.x`) %>% 
+  ggplot(aes(x=MAPQ, y=prop)) + 
+  geom_bar(stat = "identity") + 
+  theme_bw() + 
+  facet_wrap(~fileName)
+```
+
+#June 5
+
+Goals:
+- Compare proportion of duplicates removed at different MAPQ scores
+- Plot comparisons of reads aligned/dup_removed etc for all 6 samples from Weyrich study
+- Split bam files & set mapDamage running
+- Try to write code that would allow performing BLAST search within R in order to check whether short reads that have aligned truely represent the genome aligned with
+
+I re-ran the count script on *rmdup.bam files, editing it so that all data was added to the same text file. This meant re-importing and manipulating the data.
+
+```{r eval=FALSE}
+#Read in csv file
+rmdupCount <- read.csv(file="mapData/rmdup_read_count.txt", sep="", skip = 1, header = FALSE)
+#Split at .bam to generate a list
+rmdupCount <- rmdupCount %>% mutate(bam = grepl("bam", V1), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Remove bam variable and bind rows together
+rmdupCount <- rmdupCount %>% bind_rows() %>% select(-bam) %>% filter(V2 != "NA")
+#Replace fileNo with sampleID
+rmdupCount$fileNo <- gsub('1', 'Chimp', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('2', 'Elsidron1', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('3', 'Elsidron2', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('4', 'Modern', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('5', 'SpyII', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('6', 'SpyI', rmdupCount$fileNo)
+#Name variables and convert factor variables to numeric
+names(rmdupCount) <- c("rmdupCount", "MAPQ", "sampleID")
+rmdupCount %>% mutate_if(is.factor, as.character) -> rmdupCount
+rmdupCount$rmdupCount <- as.numeric(rmdupCount$rmdupCount)
+#Bind rmdupCount with MAPQcount
+left_join(MAPQcount, rmdupCount, by = "sampleID") -> MAPQcount
+
+#Read in csv file
+bamCount <- read.csv(file="mapData/bam_read_count.txt", sep="", skip = 1, header = FALSE)
+#Split at .bam to generate a list
+bamCount <- bamCount %>% mutate(bam = grepl("bam", V1), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Remove bam variable and bind rows together
+bamCount <- bamCount %>% bind_rows() %>% select(-bam) %>% filter(V2 != "NA")
+bamCount$fileNo <- gsub('1', 'Chimp', bamCount$fileNo)
+bamCount$fileNo <- gsub('2', 'Elsidron1', bamCount$fileNo)
+bamCount$fileNo <- gsub('3', 'Elsidron2', bamCount$fileNo)
+bamCount$fileNo <- gsub('4', 'Modern', bamCount$fileNo)
+bamCount$fileNo <- gsub('5', 'SpyII', bamCount$fileNo)
+bamCount$fileNo <- gsub('6', 'SpyI', bamCount$fileNo)
+names(bamCount) <- c("bamCount", "MAPQ", "sampleID")
+bamCount %>% mutate_if(is.factor, as.character) -> bamCount
+bamCount$bamCount <- as.numeric(bamCount$bamCount)
+
+#Bind the two dataframes together
+left_join(bamCount, rmdupCount) -> MAPQData
+#replace NA with 0
+MAPQData[is.na(MAPQData)] <- 0
+#sort columns according to MAPQ
+MAPQData <- MAPQData[with(MAPQData, order(sampleID, MAPQ)), ]
+#calculate #duplicates present at each MAPQ
+MAPQData <- MAPQData %>% mutate(dupCount = bamCount - rmdupCount)
+#re-order columns
+MAPQData <- MAPQData[, c(3,2,1,4,5)]
+#Count total reads in bam and in rmdup.bam and #DupRemoved for each sample and add to data frame
+MAPQData %>% select(sampleID, bamCount) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalBam
+MAPQData %>% select(sampleID, rmdupCount) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalRmDup
+MAPQData %>% select(sampleID, dupCount) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalDup
+#Bind totals together in single countData table
+countData <- left_join(totalBam, totalDup, by = "sampleID")
+countData
+#calculate proportion of reads which were duplicate
+mutate(countData, propDup = dupCount/bamCount) -> countData
+
+#Read-in fastqCount data and also bind to countData table
+totalFastq <- 
+  read_delim("trimData/fastq_read_count.txt", delim = "\t", skip = 1, col_names = FALSE) %>% 
+  set_colnames(c("fileName", "fastqCount"))
+#split fileName and discard unnecessary information
+colsplit(totalFastq$fileName, "_", names=c("adapters", "sampleID", "leftBC", "rightBC")) %>% 
+  bind_cols(totalFastq) %>% select(sampleID, fastqCount) -> totalFastq
+#Edit sampleID to correspond with format in other data frame's
+totalFastq$sampleID <- gsub('CHIMP', 'Chimp', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('ELSIDRON1L7', 'Elsidron1', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('ELSIDRON2L7', 'Elsidron2', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('ModernL7', 'Modern', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('SPYNEWL8', 'SpyII', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('SPYOLD', 'SpyI', totalFastq$sampleID)
+#Bind to countData table
+countData <- left_join(countData, totalFastq, by = "sampleID")
+countData <- countData[, c(1,5,2:4)]
+#calculate proportion of reads that aligned
+countData <- countData %>% mutate(propAln = bamCount/fastqCount)
+countData <- countData[, c(1:3,6, 4:5)]
+```
+
+Began plotting data
+
+```{r eval=FALSE}
+#Plot number of reads sequenced and aligned for each sample
+countData %>% select(sampleID, fastqCount, bamCount) %>% 
+  melt(id.vars = c("sampleID"), variable.name = "counting", value.name = "count") %>% 
+  ggplot(aes(x="", y=count, fill=counting)) + 
+  geom_bar(width = 1, stat = "identity") + 
+  scale_y_continuous(labels = scales::comma) + 
+  theme_bw() + 
+  facet_wrap(~sampleID) + 
+  ylab("Number of Reads") + 
+  guides(fill=guide_legend(title=NULL)) + 
+  scale_fill_discrete(limits=c("bamCount", "fastqCount"), labels=c("Aligned", "Not aligned")) + 
+  theme(axis.title.x = element_blank()) + 
+  ggtitle("Number of reads sequenced and aligned within each sample")
+
+###plot proportion of reads aligned per sample as a pie chart
+
+#Create a blank theme to be applied to pie charts
+blank_theme <- theme_minimal()+
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.border = element_blank(),
+    panel.grid=element_blank(),
+    axis.ticks = element_blank(),
+    plot.title=element_text(size=14, face="bold")
+  )
+
+#calculate proportion of reads that did not align overall
+countData <- countData %>% mutate(propUnAln = (fastqCount-bamCount)/fastqCount)
+countData <- countData[, c(1:3, 7, 4:6)]
+propAln <- countData %>% select(sampleID, propAln, propUnAln) %>% melt(id.vars = "sampleID")
+propAln[,3] <- round(propAln[,3],4)
+propAln <- propAln %>% mutate(value = value*100)
+
+#plot
+ggplot(propAln, aes(x="", y=value, fill=variable)) + 
+  geom_bar(stat = "identity") + 
+  coord_polar("y", start = 0) + 
+  blank_theme + 
+  scale_fill_discrete(labels=c("% Aligned", "% Not Aligned")) + 
+  facet_wrap(~sampleID, ncol=3) + 
+  geom_text(aes(label=value), position = position_stack(vjust = 0.5)) +
+  theme(axis.text.x=element_blank()) +
+  guides(fill=guide_legend(title=NULL)) + 
+  ggtitle("Proportion of total reads aligned")
+
+#plot prop duplicates removed from each sample
+countData <- countData %>% mutate(propNonDup = (bamCount-dupCount)/bamCount)
+propDup <- countData %>% select(sampleID, propDup, propNonDup) %>% melt(id.vars = "sampleID")
+propDup[,3] <- round(propDup[,3],4)
+propDup <- propDup %>% mutate(value = value*100)
+
+ggplot(propDup, aes(x="", y=value, fill=variable)) + 
+  geom_bar(stat = "identity") + 
+  coord_polar("y", start = 0) + 
+  blank_theme + 
+  facet_wrap(~sampleID, ncol = 3) +
+  scale_fill_discrete(labels=c("% Duplicate", "% Non-duplicate")) +
+  geom_text(aes(label=value), position = position_stack(vjust = 0.5)) +
+  theme(axis.text.x=element_blank()) +
+  guides(fill=guide_legend(title=NULL)) + 
+  ggtitle("Proportion of aligned reads identified as duplicate")
+
+#table with important count data
+left_join(countData, totalRmDup, by = "sampleID") -> countData
+countTable <- countData %>% select(-propUnAln, -dupCount, -propNonDup)
+countTable <- countTable %>% mutate(propAln = propAln*100) %>% mutate(propDup = propDup*100)
+countTable$propAln <- round(countTable$propAln, 2)
+countTable$propDup <- round(countTable$propDup, 2)
+names(countTable) <- c("Sample ID", "No. merged reads", "No. aligned reads", 
+                       "% reads aligned", "% reads duplicate", "No. aligned reads after duplicates removed")
+```
+
+Generated several other plots comparing number and proportion of reads at different MAPQ scores before and after removal of duplicates. Haven't yet determined which is the best way to display this data. Jimmy suggested binning the MAPQ scores rather than plotting each one and then plotting.
+
+##June 6
+
+Goals for today:-
+- Manipulate MAPQ data into bins and re-plot
+- Select best plots/tables and begin including in an R-markdown presentation ready for Hub meeting Friday
+- Split bam files and run mapDamage2.0
+    - first need to extract list of genome ID's to which reads aligned
+    - edit bash code for splitting bam files to try and use genome IDs in genomeList.txt file
+
+Struggled to create table containing number of reads at various MAPQ scores as difficulty with reshape(direction = wide) commands. Need to read-up on this or get some assistance
+
+Was able to bin MAPQ data and plot
+
+```{r eval=FALSE}
+#Add categorical bins (MAPQrange)
+MAPQData$MAPQrange <- cut(MAPQData$MAPQ, breaks = c(0,6,11,16,21,26,38), 
+                          labels = c("0-5", "6-10", "11-15", "16-20", "21-25", "37"), 
+                          right = FALSE)
+#split data frame by sampleID and summarise counts within each MAPQrange
+MAPQData %>% split(f = .$sampleID) %>% 
+  lapply(function(x){x %>% select(bamCount, rmdupCount, dupCount, MAPQrange) %>% 
+      group_by(MAPQrange) %>% summarise_each(funs(sum)) %>% 
+      mutate(sampleID = (names(x)))}) -> countByMAPQrange
+#Plot bamCount (still in list form)
+countByMAPQrange %>% lapply(function(x){x %>% 
+    ggplot(aes(x=MAPQrange, y=bamCount)) + 
+    geom_bar(stat = "identity")+
+    ggtitle("bamCount by MAPQ for", paste(countByMAPQrange$x))})
+#Bind_rows of list, taking list names and re-inserting as sampleID
+countByMAPQrange <- countByMAPQrange %>% bind_rows(.id = "sampleID")
+#Plot bamCount and rmdupCount together for each MAPQrange
+countByMAPQrange %>% select(-dupCount) %>% 
+  melt(id.vars = c("sampleID", "MAPQrange")) %>% 
+  ggplot(aes(x=MAPQrange, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  facet_wrap(~sampleID, ncol=2) + 
+  theme_bw() + 
+  ylab("No. of Reads") + 
+  xlab("MAPQ score") + 
+  ggtitle("Number of reads by MAPQ score, before and after de-duplication") + 
+  guides(fill=guide_legend(title = NULL)) + 
+  scale_fill_discrete(labels=c("Before", "After")) +
+  xlab("MAPQ score") + 
+  ylab("Proportion of reads")
+
+###Re-do above plot but convert to proportions (i.e. bamCount/totalBam; rmdupCount/totalRmDup)
+
+#Add totalBam counts to data frame
+countByMAPQrange <- left_join(countByMAPQrange, totalBam, by = "sampleID")
+#Add total RmDup counts to data frame
+countByMAPQrange <- left_join(countByMAPQrange, totalRmDup, by = "sampleID")
+#calculate proportions
+countByMAPQrange %>% mutate(bamCount = bamCount/totalBam) %>% 
+  mutate(rmdupCount.x = rmdupCount.x/rmdupCount.y) %>% 
+  select(-dupCount, -totalBam, -rmdupCount.y) %>% 
+  melt(id.vars = c("sampleID", "MAPQrange")) %>% 
+  ggplot(aes(x=MAPQrange, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  facet_wrap(~sampleID, ncol=2) + 
+  theme_bw() +
+  ggtitle("Proportion of reads at each MAPQ score before and after de-duplication") +
+  guides(fill=guide_legend(title = NULL)) +
+  scale_fill_discrete(labels=c("Before", "After"))
+
+#This time plot proportion of bam reads against prop of duplicates at each MAPQscore
+countByMAPQrange <- left_join(countByMAPQrange, totalDup, by = "sampleID")
+countByMAPQrange %>% 
+  select(-rmdupCount.x, -rmdupCount.y) %>% 
+  mutate(bamCount = bamCount/totalBam) %>% 
+  mutate(dupCount = dupCount/totalDup) %>% 
+  select(-totalBam, -totalDup) %>% 
+  melt(id.vars = c("sampleID", "MAPQrange")) %>% 
+    ggplot(aes(x=MAPQrange, y=value, fill=variable)) + 
+    geom_bar(stat = "identity", position = position_dodge()) + 
+    facet_wrap(~sampleID, ncol=2) + 
+    theme_bw() + 
+    ggtitle("Proportion of reads aligned and identified as duplicate at each MAPQ score") + 
+    guides(fill=guide_legend(title = NULL)) + 
+    scale_fill_discrete(labels=c("% Aligned", "% Duplicate")) + 
+    xlab("MAPQ score") + 
+    ylab("Proportion of reads")
+```
+
+Wrote and ran a bash script to split rmdup.bam files into separate genomes
+- No quality filtering done initially
+- Could not get regular expressions working within the awk command and therefore used the previous awk command outside the while loop
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+MAPDIR=$ROOTDIR/weyrich/mapData
+LOW_Q_DIR=$MAPDIR/lowQualMapData
+LOGFILE=$ROOTDIR/weyrich/mapDamageLog.txt
+
+################# split bam file ####################
+
+#Change into directory where .bam files located
+if [ -d ${MAPDIR} ]
+then
+  echo "Changing to ${MAPDIR}"
+  cd ${MAPDIR}
+else
+  echo "Cannot find ${MAPDIR}"
+exit1
+fi
+
+#use samtools view & chromosome ID to split into separate bam files
+for rmdup_file in *_rmdup.bam
+  do
+  PREFIX4=${rmdup_file%%_rmdup.bam}
+  echo -e "Splitting ${rmdup_file}"
+  samtools view -h ${rmdup_file} | awk '{if($3 != "NZ_CP014232.1" && $3 != "NC_010729.1" && $3 != "NC_004350.2" && $3 != "NC_016610.1" && $3 != "NZ_CP012196.1" && $3 != "NC_003454.1" && $3 != "NC_002967.9" && $3 != "NC_023036.2" && $3 != "NZ_GG688422.1" && $3 != "NC_000907.1" && $3 != "NC_003454.1" && $3 != "NC_013203.1" && $3 != "NC_013853.1" && $3 != "NC_017860.1" && $3 != "NC_017861.1" && $3 != "NC_003112.2"){print $0}}' | samtools view -Sb > ${LOW_Q_DIR}/${PREFIX4}_M.oralis_split.bam
+    while read -r line; do 
+        chrID=$(echo "${line}" | cut -f2)
+        echo "$chrID"
+        ref=$(echo "${line}" | cut -f1)
+        echo "$ref"
+        samtools view -bSh ${rmdup_file} ${chrID} > ${LOW_Q_DIR}/${PREFIX4}_${ref}_split.bam
+      done < ${ROOTDIR}/weyrich/chrID.txt
+  done
+```
+
+#June 7
+
+Goals:
+- Count reads in split bam and plot
+- Collate length data for fastq, rmdup.bam and low qual split bam and plot
+- Split rmdup.bam using -q 30 filter
+- run mapDamage2.0 on high qual split data
+- print desired plots to jpeg and put together R markdown presentation
+- try running blast search from within R.
+
+Collated length data for fastq and rmdup files with following script:
+
+```{bash eval=FALSE}
+############ Collate length data for fastq and rmdup.bam files ##################
+
+#Change into directory where .fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to ${TRIMDIR}"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#Generate text file for storing length count data
+if [ ! -f fastq_length.txt ]
+then
+  echo -e 'Creating file fastq_length.txt'
+  echo -e 'No.Reads\tlength' > ${TRIMDIR}/fastq_length.txt
+else
+  echo  'fastq_length.txt already exists'
+fi
+
+#Count fastq lengths for each file
+for fastq_file in *fastq.gz
+  do
+    echo -e "Collating read lengths in ${fastq_file}"
+    echo -e "${fastq_file}" >> ${TRIMDIR}/fastq_length.txt
+    zcat ${fastq_file} | awk '{if(NR%4==2) print length($1)}' | sort -n | uniq -c >> ${TRIMDIR}/fastq_length.txt
+  done
+
+#Change into directory where rmdup.bam files located
+if [ -d ${MAPDIR} ]
+then
+  echo "Changing to ${MAPDIR}"
+  cd ${MAPDIR}
+else
+  echo "Cannot find ${MAPDIR}"
+exit1
+fi
+
+#Generate text file for storing rmdup length data
+if [ ! -f rmdup_length.txt ]
+then
+  echo -e 'Creating file rmdup_length.txt'
+  echo -e 'No.Reads\tlength' > ${MAPDIR}/rmdup_length.txt
+else
+  echo  'rmdup_length.txt already exists'
+fi
+
+#Count rmdup.bam lengths for each file
+for rmdup_file in *rmdup.bam
+  do
+    echo -e "Collating read lengths in ${fastq_file}"
+    echo -e "${rmdup_file}" >> ${MAPDIR}/rmdup_length.txt
+    samtools view ${rmdup_file} | awk '{print length($10)}' | sort -n | uniq -c >> ${MAPDIR}/rmdup_length.txt
+  done
+```
+
+Split high qual alignment data with following bash script:
+
+```{bash eval=FALSE}
+################# split bam file - q30 quality filter ####################
+
+#Change into directory where rmdup.bam files located
+if [ -d ${MAPDIR} ]
+then
+  echo "Changing to ${MAPDIR}"
+  cd ${MAPDIR}
+else
+  echo "Cannot find ${MAPDIR}"
+exit1
+fi
+
+#make directory for high qual bam files
+if [ ! -d ${HIGH_Q_DIR} ]
+then
+  echo -e "making directory ${HIGH_Q_DIR}"
+  mkdir highQualMapData
+else
+  echo -e "${HIGH_Q_DIR} already exists"
+fi
+
+#use samtools view & chromosome ID to split into separate bam files
+for rmdup_file in *_rmdup.bam
+  do
+  PREFIX4=${rmdup_file%%_rmdup.bam}
+  echo -e "Splitting ${rmdup_file}"
+  samtools view -q 30 -h ${rmdup_file} | awk '{if($3 != "NZ_CP014232.1" && $3 != "NC_010729.1" && $3 != "NC_004350.2" && $3 != "NC_016610.1" && $3 != "NZ_CP012196.1" && $3 != "NC_003454.1" && $3 != "NC_002967.9" && $3 != "NC_023036.2" && $3 != "NZ_GG688422.1" && $3 != "NC_000907.1" && $3 != "NC_003454.1" && $3 != "NC_013203.1" && $3 != "NC_013853.1" && $3 != "NC_017860.1" && $3 != "NC_017861.1" && $3 != "NC_003112.2"){print $0}}' | samtools view -Sb > ${HIGH_Q_DIR}/${PREFIX4}_M.oralis_split.bam
+    while read -r line; do 
+        chrID=$(echo "${line}" | cut -f2)
+        echo "$chrID"
+        ref=$(echo "${line}" | cut -f1)
+        echo "$ref"
+        samtools view -q 30 -bSh ${rmdup_file} ${chrID} > ${HIGH_Q_DIR}/${PREFIX4}_${ref}_split.bam
+      done < ${ROOTDIR}/weyrich/chrID.txt
+  done
+```
+
+Counted number of low and high qual alignments using following bash script:
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#count merged_fastq and _rmdup.bam and _split.bam files
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+MAPDIR=$ROOTDIR/weyrich/mapData
+LOW_Q_DIR=$MAPDIR/lowQualMapData
+HIGH_Q_DIR=$MAPDIR/highQualMapData
+
+#Change into directory where aln_files located
+if [ -d ${MAPDIR} ]
+then
+  echo "Changing to mapData directory"
+  cd ${MAPDIR}
+else
+  echo "Cannot find ${MAPDIR}"
+exit1
+fi
+
+########### Count split.bam at each MAPQ for lowQualMapData ###################
+
+#Change into directory where low_qual_split_files located
+if [ -d ${LOW_Q_DIR} ]
+then
+  echo "Changing to lowQualMapData directory"
+  cd ${LOW_Q_DIR}
+else
+  echo "Cannot find ${LOW_Q_DIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f low_qual_split_count.txt ]
+then
+  echo -e 'Creating file low_qual_split_count.txt'
+  echo -e "#Reads  MAPQ" > low_qual_split_count.txt
+else
+  echo  'low_qual_split_count.txt already exists'
+fi
+
+#Count reads at different MAPQ scores for each rmdup.bam
+for low_qual_split_file in *split.bam
+  do
+    echo "Counting reads in ${low_qual_split_file}"
+    MAPCOUNT=$(samtools view ${low_qual_split_file} | cut -f5 | sort | uniq -c)
+    echo -e "${low_qual_split_file}" >> low_qual_split_count.txt
+    echo -e "${MAPCOUNT}" >> low_qual_split_count.txt
+  done
+
+########### Count reads in highQualMapData split.bam ###################
+
+#Change into directory where highQualAln_files located
+if [ -d ${HIGH_Q_DIR} ]
+then
+  echo "Changing to highQualMapData directory"
+  cd ${HIGH_Q_DIR}
+else
+  echo "Cannot find ${HIGH_Q_DIR}"
+exit1
+fi
+
+#Generate text file for storing split alignment count data
+if [ ! -f high_qual_split_count.txt ]
+then
+  echo -e 'Creating file high_qual_split_count.txt'
+  echo -e "fileName\tNo.Reads" > high_qual_split_count.txt
+else
+  echo  'high_qual_split_count.txt already exists'
+fi
+
+#Count total number of reads aligned in each split file with -q 30 filter
+for high_qual_split_file in *split.bam
+  do
+    echo "Counting reads in ${high_qual_split_file}"
+    MAPCOUNT2=$(samtools view -c ${high_qual_split_file})
+    echo -e "${high_qual_split_file%%_split.bam}\t${MAPCOUNT2}" >> high_qual_split_count.txt
+  done
+```
+
+Run mapDamage2.0 on the highQualMapData with following part of bash script:
+
+```{bash eval=FALSE}
+################# mapDamage #########################
+
+#Change into directory where high_qual_split.bam files located
+if [ -d ${HIGH_Q_DIR} ]
+then
+  echo "Changing to ${HIGH_Q_DIR}"
+  cd ${HIGH_Q_DIR}
+else
+  echo "Cannot find ${HIGH_Q_DIR}"
+exit1
+fi
+
+#Add time stamp to logfile
+echo -e "$(date -u)\tstarting mapDamage analysis" >> ${LOGFILE}
+
+for split_file in *split.bam
+  do
+    echo "Running mapDamage on ${split_file}"
+    mapDamage -i ${split_file} -r $MAPDIR/combined.fna
+    echo -e "$(date -u)\tcompleted mapDamage for ${split_file}" >> ${LOGFILE}
+  done
+```
+
+Plot low_qual_split_counts and high_qual_split_counts
+
+- this proved very difficult. Needed to bin MAPQ into ranges for plotting, couldn't do this while data in list form & take too long to subset 90 different ways. Instead will be easier to make new count using different -q cut-offs and then plot as did initially.
+
+Plot high_qual_split_counts
+
+```{r eval = FALSE}
+############# Read in and plot high_qual_split_count ###################
+
+#Read-in text file and assign to object
+highQsplitCount <- 
+  read_delim(file="mapData/highQualMapData/high_qual_split_count.txt", delim = "\t", skip = 1, col_names = FALSE) %>% 
+  set_colnames(c("fileName", "count"))
+#Split fileName into sampleID and genome
+highQsplitCount <- colsplit(highQsplitCount$fileName, "_", names = c("Adapt", "sample")) %>% 
+  bind_cols(highQsplitCount) %>% select(-Adapt, -fileName)
+highQsplitCount <- colsplit(highQsplitCount$sample, "_l", names = c("sampleID", "extra")) %>%
+  bind_cols(highQsplitCount) %>% select(-sample)
+highQsplitCount <- colsplit(highQsplitCount$extra, "_r", names = c("misc1", "almostGenome")) %>%
+  bind_cols(highQsplitCount) %>% select(-extra, -misc1)
+highQsplitCount <- colsplit(highQsplitCount$almostGenome, "_", names = c("misc2", "genome")) %>%
+  bind_cols(highQsplitCount) %>% select(-almostGenome, -misc2)
+
+
+###Plot relative abundance of microbes in terms of read count
+#pdf("plots/relativeAbundance_reads_Q30.pdf")
+highQsplitCount %>% ggplot(aes(x=sampleID, y=count, fill=genome)) + 
+  geom_bar(colour = "white", stat = "identity") + 
+  theme_bw() + 
+  scale_y_continuous(labels = scales::comma) + 
+  ylab("Number of reads") + 
+  scale_x_discrete(labels=c("Chimp", "Elsidron1", "Elsidron2", "Modern", "Spy II", "Spy I")) +
+  guides(fill=guide_legend(title = "Genome")) +
+  xlab("Sample") + 
+  ggtitle("Relative abundance of microbes (MAPQ > 30)")
+#dev.off()
+
+#Re-calculate into proportions and plot
+highQsplitCount %>% select(-genome) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalQ30
+names(totalQ30) <- c("sampleID", "totalCount")
+highQsplitCount <- left_join(highQsplitCount, totalQ30, by = "sampleID")
+highQsplitCount %>% mutate(prop = count/totalCount) -> highQsplitCount
+
+#Plot proportions for each sample
+#pdf("plots/relativeAbundance_prop_Q30.pdf")
+highQsplitCount %>% 
+  ggplot(aes(x=sampleID, y=prop, fill=genome)) + 
+  geom_bar(colour="white", stat = "identity") + 
+  theme_bw() + 
+  xlab("Sample") + 
+  ylab("Proportion of reads") + 
+  labs(fill="Genome") +
+  scale_x_discrete(labels = c("Chimp", "Elsidron1", "Elsidron2", "Modern", "Spy II", "Spy I")) +
+  ggtitle("Relative abundance of microbes with MAPQ > 30") +
+  annotate("text", x = c(1:6), y=-0.05, size=3,
+           label = c("11,308", "325,561", "132,009", "532,996", "341", "10,801")) 
+#dev.off()
+```
+
+
+#June 8
+
+- Tiedied up code for plotting MAPQcounts
+- Put together presentation for Friday Journal Hub Meeting
+
+```{r eval=FALSE}
+
+#Read in csv file
+bamCount <- read.csv(file="mapData/bam_read_count.txt", sep="", skip = 1, header = FALSE)
+#Split at .bam to generate a list
+bamCount <- bamCount %>% mutate(bam = grepl("bam", V1), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Remove bam variable and bind rows together
+bamCount <- bamCount %>% bind_rows() %>% select(-bam) %>% filter(V2 != "NA")
+bamCount$fileNo <- gsub('1', 'Chimp', bamCount$fileNo)
+bamCount$fileNo <- gsub('2', 'Elsidron1', bamCount$fileNo)
+bamCount$fileNo <- gsub('3', 'Elsidron2', bamCount$fileNo)
+bamCount$fileNo <- gsub('4', 'Modern', bamCount$fileNo)
+bamCount$fileNo <- gsub('5', 'SpyII', bamCount$fileNo)
+bamCount$fileNo <- gsub('6', 'SpyI', bamCount$fileNo)
+names(bamCount) <- c("bamCount", "MAPQ", "sampleID")
+bamCount %>% mutate_if(is.factor, as.character) -> bamCount
+bamCount$bamCount <- as.numeric(bamCount$bamCount)
+
+#Read in csv file
+rmdupCount <- read.csv(file="mapData/rmdup_read_count.txt", sep="", skip = 1, header = FALSE)
+#Split at .bam to generate a list
+rmdupCount <- rmdupCount %>% mutate(bam = grepl("bam", V1), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Remove bam variable and bind rows together
+rmdupCount <- rmdupCount %>% bind_rows() %>% select(-bam) %>% filter(V2 != "NA")
+#Replace fileNo with sampleID
+rmdupCount$fileNo <- gsub('1', 'Chimp', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('2', 'Elsidron1', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('3', 'Elsidron2', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('4', 'Modern', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('5', 'SpyII', rmdupCount$fileNo)
+rmdupCount$fileNo <- gsub('6', 'SpyI', rmdupCount$fileNo)
+#Name variables and convert factor variables to numeric
+names(rmdupCount) <- c("rmdupCount", "MAPQ", "sampleID")
+rmdupCount %>% mutate_if(is.factor, as.character) -> rmdupCount
+rmdupCount$rmdupCount <- as.numeric(rmdupCount$rmdupCount)
+#Bind rmdupCount with MAPQcount
+left_join(bamCount, rmdupCount) -> MAPQcount
+#Replace NA with 0
+MAPQcount[is.na(MAPQcount)] <- 0
+
+#calculate proportion of reads which were duplicate
+mutate(countData, propDup = dupCount/bamCount) -> countData
+
+#calculate #duplicates present at each MAPQ
+MAPQcount <- MAPQcount %>% mutate(dupCount = bamCount - rmdupCount)
+#re-order columns
+MAPQcount <- MAPQcount[, c(3,2,1,4,5)]
+#Count total reads in bam and in rmdup.bam and #DupRemoved for each sample and add to data frame
+MAPQcount %>% select(sampleID, bamCount) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalBam
+MAPQcount %>% select(sampleID, rmdupCount) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalRmDup
+MAPQcount %>% select(sampleID, dupCount) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalDup
+#Bind totals together in single countData table
+countData <- left_join(totalBam, totalDup, by = "sampleID")
+countData <- left_join(countData, totalRmDup, by = "sampleID")
+
+#Read-in fastqCount data and also bind to countData table
+totalFastq <- 
+  read_delim("trimData/fastq_read_count.txt", delim = "\t", skip = 1, col_names = FALSE) %>% 
+  set_colnames(c("fileName", "fastqCount"))
+#split fileName and discard unnecessary information
+colsplit(totalFastq$fileName, "_", names=c("adapters", "sampleID", "leftBC", "rightBC")) %>% 
+  bind_cols(totalFastq) %>% select(sampleID, fastqCount) -> totalFastq
+#Edit sampleID to correspond with format in other data frame's
+totalFastq$sampleID <- gsub('CHIMP', 'Chimp', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('ELSIDRON1L7', 'Elsidron1', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('ELSIDRON2L7', 'Elsidron2', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('ModernL7', 'Modern', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('SPYNEWL8', 'SpyII', totalFastq$sampleID)
+totalFastq$sampleID <- gsub('SPYOLD', 'SpyI', totalFastq$sampleID)
+#Bind to countData table
+countData <- left_join(countData, totalFastq, by = "sampleID")
+countData <- countData[, c(1,5,2:4)]
+#calculate proportion of reads that aligned
+#countData <- countData %>% mutate(propAln = bamCount/fastqCount)
+#countData <- countData[, c(1:3,6, 4:5)]
+
+###Plot number of reads sequenced and aligned for each sample
+#pdf("plots/No.Reads.Seq.and.Aligned.by.sample.pdf")
+countData %>% select(sampleID, fastqCount, bamCount) %>% 
+  melt(id.vars = c("sampleID"), variable.name = "counting", value.name = "count") %>% 
+  ggplot(aes(x="", y=count, fill=counting)) + 
+  geom_bar(width = 1, stat = "identity") + 
+  scale_y_continuous(labels = scales::comma) + 
+  theme_bw() + 
+  facet_wrap(~sampleID) + 
+  ylab("Number of Reads") + 
+  guides(fill=guide_legend(title=NULL)) + 
+  scale_fill_discrete(limits=c("bamCount", "fastqCount"), labels=c("Aligned", "Not aligned")) + 
+  theme(axis.title.x = element_blank()) + 
+  ggtitle("Number of reads sequenced and aligned within each sample")
+#dev.off()
+
+#plot proportion of reads aligned per sample as a pie chart
+
+#Create a blank theme to be applied to pie charts
+blank_theme <- theme_minimal()+
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.border = element_blank(),
+    panel.grid=element_blank(),
+    axis.ticks = element_blank(),
+    plot.title=element_text(size=14, face="bold")
+  )
+
+#calculate proportion of reads that did not align overall
+countData <- countData %>% mutate(propUnAln = (fastqCount-bamCount)/fastqCount)
+#calculate proportion of reads that aligned
+countData <- countData %>% mutate(propAln = bamCount/fastqCount)
+countData <- countData[, c(1:3, 7:6, 4:5)]
+propAln <- countData %>% select(sampleID, propAln, propUnAln) %>% melt(id.vars = "sampleID")
+propAln[,3] <- round(propAln[,3],4)
+propAln <- propAln %>% mutate(value = value*100)
+
+###plot
+#pdf("plots/Prop.total.reads.aligned.pdf")
+ggplot(propAln, aes(x="", y=value, fill=variable)) + 
+  geom_bar(stat = "identity") + 
+  coord_polar("y", start = 0) + 
+  blank_theme + 
+  scale_fill_discrete(labels=c("% Aligned", "% Not Aligned")) + 
+  facet_wrap(~sampleID, ncol=3) + 
+  geom_text(aes(label=value), position = position_stack(vjust = 0.5)) +
+  theme(axis.text.x=element_blank()) +
+  guides(fill=guide_legend(title=NULL)) + 
+  ggtitle("Proportion of total reads aligned")
+#dev.off()
+
+###plot prop duplicates removed from each sample
+#calculate proportion of aligned reads that were duplicate & non-duplicate
+countData <- countData %>% mutate(propNonDup = rmdupCount/bamCount)
+countData <- countData %>% mutate(propDup = dupCount/bamCount)
+#assign prop to object and round values
+propDup <- countData %>% select(sampleID, propDup, propNonDup) %>% melt(id.vars = "sampleID")
+propDup[,3] <- round(propDup[,3],4)
+propDup <- propDup %>% mutate(value = value*100)
+
+#plot pie chart
+#pdf("plots/Prop.total.reads.duplicate.pdf")
+ggplot(propDup, aes(x="", y=value, fill=variable)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(values=c("#00BFC4", "#F8766D"), breaks=c("propNonDup", "propDup"), labels=c("Non-duplicate", "Duplicate")) + 
+  coord_polar("y", start = 0) + 
+  blank_theme + 
+  facet_wrap(~sampleID, ncol = 3) +
+  geom_text(aes(label=value), position = position_stack(vjust = 0.5)) +
+  theme(axis.text.x=element_blank()) +
+  guides(fill=guide_legend(title=NULL)) +
+  ggtitle("Proportion of aligned reads identified as duplicate")
+#dev.off()
+
+###Summarise data for MAPQ score into bins
+
+#Add categorical bins (MAPQrange)
+MAPQcount$MAPQrange <- cut(MAPQcount$MAPQ, breaks = c(0,10,20,30,40), 
+                          labels = c("0-9", "10-19", "20-29", "30-40"), 
+                          right = FALSE)
+
+#split data frame by sampleID and summarise counts within each MAPQrange and return to single data frame
+MAPQcount %>% split(f = .$sampleID) %>% 
+  lapply(function(x){x %>% 
+      select(bamCount, rmdupCount, dupCount, MAPQrange) %>% 
+      group_by(MAPQrange) %>% 
+      summarise_each(funs(sum))}) %>% 
+  bind_rows(.id = "sampleID") -> countByMAPQrange
+
+#Plot bamCount and rmdupCount together for each MAPQrange
+pdf("plots/bamCount.and.rmdupCount.by.MAPQ.pdf")
+countByMAPQrange %>% select(-dupCount) %>% 
+  melt(id.vars = c("sampleID", "MAPQrange")) %>% 
+  ggplot(aes(x=MAPQrange, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  facet_wrap(~sampleID, ncol=3) + 
+  theme_bw() + 
+  ylab("No. of Reads") + 
+  xlab("MAPQ score") + 
+  ggtitle("Number of reads by MAPQ score, before and after de-duplication") + 
+  guides(fill=guide_legend(title = NULL)) + 
+  scale_fill_discrete(labels=c("Before", "After")) +
+  xlab("MAPQ score") + 
+  ylab("Number of reads")
+dev.off()
+
+###Re-do above plot but convert to proportions (i.e. bamCount/totalBam; rmdupCount/totalBam)
+
+#Add totalBam counts to data frame
+countByMAPQrange <- left_join(countByMAPQrange, totalBam, by = "sampleID")
+#Add total RmDup counts to data frame
+countByMAPQrange <- left_join(countByMAPQrange, totalRmDup, by = "sampleID")
+#Calculate proportions and assign to object
+countByMAPQrange %>% 
+  mutate(bamCount.x = bamCount.x/bamCount.y) %>% 
+  mutate(rmdupCount.x = rmdupCount.x/bamCount.y) %>% 
+  mutate(dupCount = dupCount/bamCount.y) %>% 
+  select(-bamCount.y, -rmdupCount.y) -> test
+#re-order columns prior to melting and plotting
+test <- test[, c(1:3,5,4)]
+#plot
+#pdf("plots/prop.reads.by.MAPQ.pdf")
+test %>% melt(id.vars = c("sampleID", "MAPQrange")) %>% 
+  ggplot(aes(x=MAPQrange, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  facet_wrap(~sampleID) + 
+  theme_bw() + 
+  guides(fill=guide_legend(title=NULL)) + 
+  scale_fill_discrete(labels=c("Aligned", "Duplicate", "Remaining after\nduplicate removal")) + 
+  ylab("Proportion of aligned reads") + 
+  xlab("MAPQ range") + 
+  ggtitle("Proportion of reads by MAPQ score")
+#dev.off()
+
+###Plot proportion of duplicates at each MAPQ
+#pdf("plots/prop.dup.by.MAPQ.pdf")
+countByMAPQrange %>% mutate(totalDup = bamCount.y -rmdupCount.y) %>% 
+  select(-bamCount.x, -bamCount.y, -rmdupCount.x, -rmdupCount.y) %>% 
+  mutate(propDup = dupCount/totalDup) %>% select(-dupCount, -totalDup) %>% 
+  ggplot(aes(x=MAPQrange, y=propDup, fill=sampleID)) + 
+  geom_bar(colour = "white", stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  xlab("MAPQ range") + 
+  ylab("Proportion of reads") + 
+  ggtitle("Proportion of duplicates removed by MAPQ score") + 
+  guides(fill=guide_legend(title = "Sample"))
+#dev.off()
+
+################## Plots of No. Reads at each MAPQ score for split files #################
+
+#Read in csv file
+splitMAPQcount <- read.csv(file="mapData/lowQualMapData/low_qual_split_count.txt", sep="", skip = 1, header = FALSE)
+#Split at .bam to generate a list
+splitMAPQcount <- splitMAPQcount %>% mutate(bam = grepl("bam", V1), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Counts listed in same order files are listed within director
+#Therefore, create a list of all files in lowQualMapData directory
+lowQualMapDataFiles <- list.files("mapData/lowQualMapData/", pattern = "_split.bam", 
+                          full.names = TRUE, recursive = TRUE)
+#assign this list as names for each element of splitMAPQcount list
+names(splitMAPQcount) <- lowQualMapDataFiles
+#Bind_rows of list, taking list names and re-inserting as fileName
+splitMAPQcount <- splitMAPQcount %>% bind_rows(.id = "fileName")
+#remove unnecessary columns and rows
+splitMAPQcount <- splitMAPQcount %>% select(-bam, -fileNo) %>% filter(V2 != "NA")
+#add names to columns
+names(splitMAPQcount) <- c("fileName", "No.Reads", "MAPQ")
+#Convert as.factor to as.numeric
+splitMAPQcount$No.Reads <- as.numeric(as.character(splitMAPQcount$No.Reads))
+#split fileName into components and select just sampleID and genome information to keep
+splitMAPQcount <- colsplit(splitMAPQcount$fileName, "2NoAdapt_", names=c("directory", "sample")) %>% 
+  bind_cols(splitMAPQcount) %>% 
+  select(-fileName, -directory)
+splitMAPQcount <- colsplit(splitMAPQcount$sample, "_l", names=c("sampleID", "other")) %>% bind_cols(splitMAPQcount) %>% select(-sample)
+splitMAPQcount <- colsplit(splitMAPQcount$other, "_r", names = c("leftBC", "rightBC")) %>% bind_cols(splitMAPQcount) %>% select(-leftBC, -other)
+splitMAPQcount <- colsplit(splitMAPQcount$rightBC, "_", names = c("misc", "genome", "split.bam")) %>% bind_cols(splitMAPQcount) %>% select(-misc, -split.bam, -rightBC)
+
+#Collate data into ranges e.g. 0, 1-9, 10-19, 10-29, 30+
+splitMAPQcount$MAPQrange <- cut(splitMAPQcount$MAPQ, breaks = c(0,10,20,30,40), labels = c("0-9", "10-19", "20-29", "30-39"), right = FALSE)
+#Use filter to extract data for each sampleID, summarise and bind together into new object
+splitMAPQcount %>% filter(sampleID == "CHIMP_150519") %>% 
+  select(-MAPQ, -sampleID) %>% split(f = .$genome) %>% 
+  lapply(function(x){x %>% 
+  select(No.Reads, MAPQrange) %>% 
+      group_by(MAPQrange) %>% 
+      summarise_each(funs(sum))
+}) %>% bind_rows(.id = "genome") -> chimpMAPQcount
+
+#Repeat above function and on ELSIDRON1 sampleID
+source("sum.sample.MAPQ.R")
+splitMAPQcount %>% filter(sampleID == "ELSIDRON1L7") -> elsidron1MAPQcount
+elsidron1MAPQcount <- sum.sample.MAPQ(elsidron1MAPQcount)
+#Elsidron2
+splitMAPQcount %>% filter(sampleID == "ELSIDRON2L7") -> elsidron2MAPQcount
+elsidron2MAPQcount <- sum.sample.MAPQ(elsidron2MAPQcount)
+#Modern
+splitMAPQcount %>% filter(sampleID == "ModernL7") -> modernMAPQcount
+modernMAPQcount <- sum.sample.MAPQ(modernMAPQcount)
+#SpyNew
+splitMAPQcount %>% filter(sampleID == "SPYNEWL8") -> spyNewMAPQcount
+spyNewMAPQcount <- sum.sample.MAPQ(spyNewMAPQcount)
+#SpyOld
+splitMAPQcount %>% filter(sampleID == "SPYOLD_L7L8") -> spyOldMAPQcount
+spyOldMAPQcount <- sum.sample.MAPQ(spyOldMAPQcount)
+
+#plot each sample and print to single pdf
+source("plot.Genome.MAPQ.R")
+#pdf("plots/Genome.MAPQ.pdf")
+plot.Genome.MAPQ(chimpMAPQcount) + ggtitle("Chimp")
+plot.Genome.MAPQ(elsidron1MAPQcount) + ggtitle("Elsidron1")
+plot.Genome.MAPQ(elsidron2MAPQcount) + ggtitle("Elsidron2")
+plot.Genome.MAPQ(modernMAPQcount) + ggtitle("Modern")
+plot.Genome.MAPQ(spyNewMAPQcount) + ggtitle("Spy II")
+plot.Genome.MAPQ(spyOldMAPQcount) + ggtitle("Spy I")
+#dev.off()
+
+############# Read in and plot high_qual_split_count ###################
+
+#Read-in text file and assign to object
+highQsplitCount <- 
+  read_delim(file="mapData/highQualMapData/high_qual_split_count.txt", delim = "\t", skip = 1, col_names = FALSE) %>% 
+  set_colnames(c("fileName", "count"))
+#Split fileName into sampleID and genome
+highQsplitCount <- colsplit(highQsplitCount$fileName, "_", names = c("Adapt", "sample")) %>% 
+  bind_cols(highQsplitCount) %>% select(-Adapt, -fileName)
+highQsplitCount <- colsplit(highQsplitCount$sample, "_l", names = c("sampleID", "extra")) %>%
+  bind_cols(highQsplitCount) %>% select(-sample)
+highQsplitCount <- colsplit(highQsplitCount$extra, "_r", names = c("misc1", "almostGenome")) %>%
+  bind_cols(highQsplitCount) %>% select(-extra, -misc1)
+highQsplitCount <- colsplit(highQsplitCount$almostGenome, "_", names = c("misc2", "genome")) %>%
+  bind_cols(highQsplitCount) %>% select(-almostGenome, -misc2)
+
+###Plot relative abundance of microbes in terms of read count
+#pdf("plots/relativeAbundance_reads_Q30.pdf")
+highQsplitCount %>% ggplot(aes(x=sampleID, y=count, fill=genome)) + 
+  geom_bar(colour = "white", stat = "identity") + 
+  theme_bw() + 
+  scale_y_continuous(labels = scales::comma) + 
+  ylab("Number of reads") + 
+  scale_x_discrete(labels=c("Chimp", "Elsidron1", "Elsidron2", "Modern", "Spy II", "Spy I")) +
+  guides(fill=guide_legend(title = "Genome")) +
+  xlab("Sample") + 
+  ggtitle("Relative abundance of microbes (MAPQ > 30)")
+#dev.off()
+
+#Re-calculate into proportions and plot
+highQsplitCount %>% select(-genome) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalQ30
+names(totalQ30) <- c("sampleID", "totalCount")
+highQsplitCount <- left_join(highQsplitCount, totalQ30, by = "sampleID")
+highQsplitCount %>% mutate(prop = count/totalCount) -> highQsplitCount
+
+#Plot proportions for each sample
+#pdf("plots/relativeAbundance_prop_Q30.pdf")
+highQsplitCount %>% 
+  ggplot(aes(x=sampleID, y=prop, fill=genome)) + 
+  geom_bar(colour="white", stat = "identity") + 
+  theme_bw() + 
+  xlab("Sample") + 
+  ylab("Proportion of reads") + 
+  labs(fill="Genome") +
+  scale_x_discrete(labels = c("Chimp", "Elsidron1", "Elsidron2", "Modern", "Spy II", "Spy I")) +
+  ggtitle("Relative abundance of microbes with MAPQ > 30") +
+  annotate("text", x = c(1:6), y=-0.05, size=3,
+           label = c("11,308", "325,561", "132,009", "532,996", "341", "10,801")) 
+#dev.off()
+```
+
+#June 9
+
+Hub presentation. 
+Feedback generally positive. 
+Some questions regarding use of BWA as aligner for identifying reads to run mapDamage analysis on. 
+Suggestion to use BLAT for identifying reads of a particular genome. 
+This will produce e-value to indicate reliability.
+Also suggested to re-group bacterial species on final plot comparing ntSub rate initial and final position on read so that gram + grouped together, gram - together etc.
+Go back and remove reads < 30bp as a larger proportion of these aligning and not unique enough.
+Question - are digested ends of read at restriction sites?
+
+#June 13
+
+Discussed presentation and future directions with Jimmy. Suggestions:
+- Remove reads < 30bp from fastq files. Re-align and run mapDamage. Compare results
+- Finish plotting ntSub Data for other samples
+- Read-up on BLAT and look at potential reference genome database to use for this process
+- Separate MAPQ 0 and MAPQ 30 data and plot separately (Is there damage in the MAPQ 0 reads?)
+- Email Laura for catch-up
+- Tidy presentation to show Laura
+- Is it possible to identify/quantify damage without alignment? (De novo damage assessment) by looking just at the % of A,T,C,G at the ends of reads (expect enrichment of T at 5' end and A at 3' end)
+- Look for enrichment of RE sites at the ends of the reads. Create a diagram (like TF motif?)
+
+Tasks completed:
+
+- Plotted ntSubData for expanded samples and genomes
+
+```{r eval=FALSE}
+##################### New plots for expanded sample/species run ############################
+
+#Create a vector with desired column names
+subDataColNames <- (c("Chr", "End", "Std", "Pos", "A", "C", "G", "T", "Total", 
+                      "GtoA", "CtoT", "AtoG", "TtoC", "AtoC", "AtoT", "CtoG", 
+                      "CtoA", "TtoG", "TtoA", "GtoC", "GtoT"))
+
+# create list of all .txt files in folder 
+ntSubFiles <- list.files("mapData/highQualMapData/", pattern = "misincorporation.txt",
+                         full.names = TRUE, recursive = TRUE)
+# exclude SpyNEW as too few reads to analyse damage patterns
+ntSubFiles <- ntSubFiles[!grepl("SPYNEWL8", ntSubFiles)]
+
+# read-in files and bind into a data frame that includes the fileName
+ntSubData <- ntSubFiles %>% lapply(function(x){
+  read_delim(x, delim = "\t", skip = 4, col_names = FALSE) %>% select(1:21) %>%
+    set_colnames(subDataColNames) %>% filter(Total > 0) %>% filter(Pos < 26) %>%
+    mutate(fileName = x) %>% select(-Chr)
+}) %>%
+  bind_rows
+
+#Edit fileName to include sampleID and Genome
+#colsplit(ntSubData, "_", names = c("directory", "adapters", "sampleID", "other"))
+ntSubData$fileName <- gsub("mapData/highQualMapData//results_2NoAdapt_", '', ntSubData$fileName)
+ntSubData$fileName <- gsub('_split/misincorporation.txt', '', ntSubData$fileName)
+ntSubData$fileName <- gsub('_150519_lACGTG_rATTGA', '', ntSubData$fileName)
+ntSubData$fileName <- gsub('L7_lACTGT_rCTCGA', '', ntSubData$fileName)
+ntSubData$fileName <- gsub('L7_lTACTG_rCTCGA', '', ntSubData$fileName)
+ntSubData$fileName <- gsub('L7_lAAGAG_rNONE', '', ntSubData$fileName)
+ntSubData$fileName <- gsub('_L7L8_lGTACC_rCTCGA', '', ntSubData$fileName)
+
+#Split fileName into sampleID and genome
+colsplit(ntSubData$fileName, "_", names = c("sampleID", "genome")) %>% bind_cols(ntSubData) %>% select(-fileName) -> ntSubData
+
+#Split data into separate samples and assign to own dataframes
+Mod_ntSubData <- ntSubData %>% filter(sampleID == "Modern")
+El1_ntSubData <- ntSubData %>% filter(sampleID == "ELSIDRON1")
+El2_ntSubData <- ntSubData %>% filter(sampleID == "ELSIDRON2")
+Chimp_ntSubData <- ntSubData %>% filter(sampleID == "CHIMP")
+SpyOld_ntSubData <- ntSubData %>% filter(sampleID == "SPYOLD")
+
+# create graphing function
+ntSub.graph <- function(df, na.rm = TRUE, ...){
+  
+  # Specify sampleID
+  sampleID <- unique(df$sampleID)
+  
+  # create list of genomeID's in data to loop over 
+  genomeID_list <- unique(df$genome)
+  
+  # create for loop to split data based on sampleID 
+  for (i in seq_along(genomeID_list)) {
+    
+    # create object to store 5p data
+    SubFreq_5p <- subset(df, df$genome==genomeID_list[i]) %>% filter(End == "5p") %>% 
+      select(-End, -Std, -genome, -sampleID) %>% 
+      group_by(Pos) %>% summarise_each(funs(sum)) %>% 
+      mutate(GtoA = GtoA/G, CtoT = CtoT/C, AtoG = AtoG/A, TtoC = TtoC/T, 
+             AtoC = AtoC/A, AtoT = AtoT/A, CtoG = CtoG/C, CtoA = CtoA/C, 
+             TtoG = TtoG/T, TtoA = TtoA/T, GtoC = GtoC/G, GtoT = GtoT/G) %>% 
+      select(-A, -C, -G, -T, -Total) %>% 
+      melt(id.vars = c("Pos"), variable.name = "substitution", value.name = "Frequency")
+    
+    #create object to store 3p data
+    SubFreq_3p <- subset(df, df$genome==genomeID_list[i]) %>% filter(End == "3p") %>% 
+      select(-End, -Std, -genome, -sampleID) %>% 
+      group_by(Pos) %>% summarise_each(funs(sum)) %>% 
+      mutate(GtoA = GtoA/G, CtoT = CtoT/C, AtoG = AtoG/A, TtoC = TtoC/T, 
+             AtoC = AtoC/A, AtoT = AtoT/A, CtoG = CtoG/C, CtoA = CtoA/C, 
+             TtoG = TtoG/T, TtoA = TtoA/T, GtoC = GtoC/G, GtoT = GtoT/G) %>% 
+      select(-A, -C, -G, -T, -Total) %>% 
+      melt(id.vars = c("Pos"), variable.name = "substitution", value.name = "Frequency")
+    
+    #plot to object, 5p data
+    plot5pData <- SubFreq_5p %>% ggplot(aes(x=Pos, y=Frequency, colour=substitution)) + geom_line() + 
+      theme_bw() + scale_y_continuous(limits = c(0, 0.4), position = "left") + 
+      ylab("Substitution Frequency") + xlab("Position from the 5' end") + theme(legend.position = "none")
+    
+    #plot to object, 3p data 
+    plot3pData <- SubFreq_3p %>% ggplot(aes(x=Pos, y=Frequency, colour=substitution)) + geom_line() + theme_bw() +
+      theme(axis.title.y=element_blank()) + scale_x_reverse() + 
+      scale_y_continuous(limits = c(0, 0.4), position = "right") +
+      ylab("Substitution Frequency") + xlab("Position from the 3' end")
+    
+    #print plots
+    library(gridExtra)
+    grid.arrange(plot5pData, plot3pData, ncol=2, widths=c(0.85,1), 
+                 top = (paste(genomeID_list[i], ' - nucleotide substitution data (', paste(sampleID, ')'))))
+    
+    #End loop
+  }
+}
+
+
+# run graphing function on df
+pdf("plots/elsidron1.ntsub.genome.expanded.pdf")
+ntSub.graph(El1_ntSubData) 
+dev.off()
+
+pdf("plots/modern.ntsub.genome.expanded.pdf")
+ntSub.graph(Mod_ntSubData)
+dev.off()
+
+
+#pdf("plots/elsidron2.ntsub.genome.pdf")
+ntSub.graph(El2_ntSubData)
+#dev.off()
+
+#pdf("plots/SpyOld.ntsub.genome.pdf")
+ntSub.graph(SpyOld_ntSubData)
+#dev.off()
+
+#pdf("plots/chimp.ntsub.genome.pdf")
+ntSub.graph(Chimp_ntSubData)
+#dev.off()
+```
+
+Plots were printed to pdf. Implications of plots:
+
+Elsidron1 (expanded)
+
+A.oris (125288) - as expected. Increased rate of C->T at 5' end (~0.32) and G->A at 3' end (~0.37). Other ntSub showed no or very low frequency. Slight increase in G->A at 5' end (~0.085). Periodicity pattern every 2pb?? WHY??
+
+A.parvulum (1367) - Expected increase in C->T (~(0.345) and G->A (~0.36). Slight increas in G->A (~0.095) and A->G (~0.07) at 5' end. Rate of A->G and T->C mutations higher than others throughout, but still background frequency.
+
+C.gracilis (37017) - Nearly twice the rate of C->T mutation frequency (~0.375) at 5' end than G->A (~0.2) at 3'end. Still see slight increase in G->A at 5' end (~0.1). Other mutation background, although there is separation between transition substitutions (slightly higher freqency) than transversion substitutions.
+
+E.saphenum (8344) - Higher rate of C->T (~0.37) than G->A (~0.23), with now characteristic increase in G->A at 5' end of ~0.1. Again there is separation between transition and transversion mutations, but with G->A and C->T mutations continuing to be slightly more frequent throghout the plotted region.
+
+F.nucleatum (3608) - Lower mutation rate than other genomes (C->T ~0.28; 3' G->A ~0.225; 5' G->A ~0.1). Some background mutations observed.
+
+H.influenza (279) - Lower rate of 5' C->T mutation (~0.26) than 3' G->A (~0.4). No increase in G->A at 3' end. Lots low level mutation frequency observed. Given only 279 reads aligned to H.influenza is this due to low sample size or are these reads not representative of this species?
+
+M.neoaurum (1002) - Lower rate of c->T mutation (~0.22) than G->A (~0.26). Not observable increase in G->A at 5' end. Lots low level mutation throughout. No separation in transition and transversion mutations.
+
+N.meningitidis (722) - Roughly equal C->T (~0.32) and G->A (~0.34). Slight increase in G->A at 5' end. Lots background mutation throuhgout. No separation in transition and transversion mutations.
+
+P.gingivalis (7113) - Similar C->T (~0.245) and G->A (~0.225) mutation frequency. Slight increase in G->A (~0.1) and A->G (0.06) at 5' end. Separation between transition and transversion mutations by very low frequency.
+
+P.intermedia (9259) - Almost identical to P. gingicalis except clearer separation between transition and transversion mutations.
+
+S.mitis (3005) - Rate of C->T at 5' end (~0.25) is less than the G->A at 3' end (~0.37). Separation between transition and transversion mutations but mutations observed throughout at level around 0.025.
+
+S.mutans (288) - lots background mutation (due to low sample size? or spurious alignment?). Highest C->T at position2 (~0.225) rather than position 1. G->A somewhat more frequent (~0.295)
+
+T.denticola (11343) - Almost Twice frequency of C->T (~0.375) than G->A (~0.22). Some increase in G->A at 3' end (~0.11) and A->G (0.05). Separation in background mutation frequency with C->T and G-A consistently higher than A->G and T->C both of which higher than transversion mutations.
+
+T.forsythia (29091) - Lower frequency of C->T (~0.225) and G->A (~0.225) than other genomes. Again see increase in G->A at 3' end (~0.1) and A->G (~0.055). Transition mutations consistently slightly higher than transversion.
+
+Modern
+
+A.oris (17515) - Background mutation frequency. Transition mutations appear slightly more common than transversion except C->G or is it C->A???
+
+A.parvulum (534) - no increased mutation frequency at ends, but substitutions present throughout read. Due to lower sample size? or spurious alignment??
+
+C.gracilis (20868) - no increased mutation frequency at ends. Separation between transition and transversion mutations observed.
+
+E.saphenum (155) - no increased mutation frequency at ends, but substitutions present throughout read. Due to lower sample size? or spurious alignment??
+
+F.nucleatum (272715) - no increased mutation frequency at ends. Separation between G->A/C->T (~0.04); A->G/T->C (~0.02); further separation visible between transversion mutations.
+
+H.influenza (1102) - no increased mutation frequency at ends, but low level substitutions present throughout read.
+
+M.neoaurum (967) - no increased mutation frequency at ends, but low level substitutions present throughout read.
+
+M.oralis (174) - no increased mutation frequency at ends, but constant substitutions present throughout read.
+
+N.meningitidis (32278) -  no increased mutation frequency at ends. Separation between transition mutations (~0.03) and transversion (~0.01)
+
+P.gingivalis (4326) - no increased mutation frequency at ends. Separation between transition mutations (~0.025) and transversion (~0.01)
+
+P.intermedia (44039) - no increased mutation frequency at ends. Separation between transition mutations (~0.025) and transversion (~0.01)
+
+S.mitis (43591) - no increased mutation frequency at ends. Separation between transition mutations (~0.025) and transversion (~0.015)
+
+S.mutans (421) - no increased mutation frequency at ends, but constant substitutions present throughout read (~0.05).
+
+T.denticola (6670) - no increased mutation frequency at ends. Separation between transition mutations (~0.025) and transversion (~0.015)
+
+T.forsythia (86641) - almost no substitutions. Separation between transition mutations (0.01) and transversion (0).
+
+
+**Is it worth calculating the average mutation frequency for all mutation types and plotting against each other to confirm that transition and transversion mutations appear at different rates
+
+##########################################################
+
+Generated filtered.fastq files for Modern and Elsidron1 samples that excluded reads shorter than 30bp.
+Use command line with following awk statements and results:
+
+```{bash eval=FALSE}
+a1698312@jacqueline-hubvm:~/weyrich/trimData$ zcat 2NoAdapt_ELSIDRON1L7_lTACTG_rCTCGA_R1R2_Collapsed.fastq.gz | awk 'BEGIN {OFS = "\n"} {header = $0 ; getline seq ; getline qheader ; getline qseq ; if (length(seq) >= 30) {print header, seq, qheader, qseq}}' > filtered.Elsidron1.fastq
+a1698312@jacqueline-hubvm:~/weyrich/trimData$ cat filtered.Elsidron1.fastq | egrep -c @M_HWI
+50039887
+a1698312@jacqueline-hubvm:~/weyrich/trimData$ zcat 2NoAdapt_ELSIDRON1L7_lTACTG_rCTCGA_R1R2_Collapsed.fastq.gz | egrep -c @M_HWI
+50238935
+a1698312@jacqueline-hubvm:~/weyrich/trimData$ zcat 2NoAdapt_ModernL7_lAAGAG_rNONE_R1R2_Collapsed.fastq.gz | awk 'BEGIN {OFS = "\n"} {header = $0 ; getline seq ; getline qheader ; getline qseq ; if (length(seq) >= 30) {print header, seq, qheader, qseq}}' > filtered.Modern.fastq
+a1698312@jacqueline-hubvm:~/weyrich/trimData$ cat filtered.Modern.fastq | egrep -c @M_HWI
+29055063
+a1698312@jacqueline-hubvm:~/weyrich/trimData$ zcat 2NoAdapt_ModernL7_lAAGAG_rNONE_R1R2_Collapsed.fastq.gz | egrep -c @M_HWI
+29469839
+```
+
+This removed 199,048 reads from the Elsidron1 fastq file and 414,776 reads from the Modern fastq file.
+
+As only the 2 sample files, completed the BWA alignment and the sambamba sort on the command line with following commands:
+
+```{bash eval=FALSE}
+bwa aln -n 0.01 -o 2 -l 1024 -t 4 ~/weyrich/mapData/bwaidx filtered.Elsidron1.fastq > filtered.Elsidron1_MAPPED.sai
+```
+
+##################################
+
+Plotted the freq of C->T and G->A mutations
+
+```{r eval=FALSE}
+############### mutation frequency comparison between genomes of each sample ####################
+
+#Generate a list of 5pCtoT_freq.txt files
+CtoT.Files <- list.files("mapData/highQualMapData", pattern = "5pCtoT_freq.txt", full.names = TRUE, recursive = TRUE)
+# exclude SpyNEW as too few reads to analyse damage patterns
+CtoT.Files <- CtoT.Files[!grepl("SPYNEWL8", CtoT.Files)]
+#Read in each of these files and bind together in a data frame (MUST specify col_types!)
+CtoTfreqData <- CtoT.Files %>% lapply(function(x){
+  read_delim(x, delim = "\t", skip = 1, col_names = FALSE, col_types = cols("i", "n")) %>% 
+    set_colnames(c("pos", "freq")) %>% 
+    mutate(fileName = x)}) %>% 
+  bind_rows()
+
+#Edit fileName to include only sampleID and genome
+CtoTfreqData$fileName <- gsub('mapData/highQualMapData/results_2NoAdapt_', '', CtoTfreqData$fileName)
+CtoTfreqData$fileName <- gsub('_split/5pCtoT_freq.txt', '', CtoTfreqData$fileName)
+CtoTfreqData$fileName <- gsub('_150519_lACGTG_rATTGA', '', CtoTfreqData$fileName)
+CtoTfreqData$fileName <- gsub('L7_lACTGT_rCTCGA', '', CtoTfreqData$fileName)
+CtoTfreqData$fileName <- gsub('L7_lTACTG_rCTCGA', '', CtoTfreqData$fileName)
+CtoTfreqData$fileName <- gsub('L7_lAAGAG_rNONE', '', CtoTfreqData$fileName)
+CtoTfreqData$fileName <- gsub('_L7L8_lGTACC_rCTCGA', '', CtoTfreqData$fileName)
+#Split sampleID and Genome into separate vector
+colsplit(CtoTfreqData$fileName, "_", names = c("sampleID", "genome")) %>% bind_cols(CtoTfreqData) %>% select(-fileName) -> CtoTfreqData
+
+#Add information on cell.wall and bind to data frame
+#Create data-frame with information about bacterial cell wall
+cellWall <- data_frame(genome = c("A.oris", "A.parvulum", "C.gracilis", "E.saphenum", "F.nucleatum", "H.influenza",
+                                  "M.neoaurum","M.oralis", "N.meningitidis", "P.gingivalis", "P.intermedia", "S.mitis", "S.mutans", 
+                                  "T.denticola", "T.forsythia"), 
+                       cellWall = c("Gram +", "Gram +", "Gram -", "Gram +", "Gram -", "Gram -", "Mycobacterium",
+                                    "Archeal", "Gram -", "Gram -", "Gram -", "Gram +", "Gram +", "Gram -", "Gram -"))
+#Bind this information to substitution frequency data
+CtoTfreqData <- CtoTfreqData %>% left_join(cellWall, by = "genome")
+#Sort data based on sampleID [,1] then cellWall [,5]
+CtoTfreqData <- CtoTfreqData[order( CtoTfreqData[,1], CtoTfreqData[,5] ), ]
+
+#Convert to factor to prevent ggplot from re-ordering when plotting (Will get a warning message)
+#CtoTfreqData$cellWall <- factor(CtoTfreqData$cellWall, levels = CtoTfreqData$cellWall)
+#CtoTfreqData$cellWall <- factor(CtoTfreqData$cellWall, levels=unique(CtoTfreqData$cellWall))
+
+#Convert genome to factor to prevent ggplot from re-ordering when plotting
+CtoTfreqData$genome <- factor(CtoTfreqData$genome, levels = unique(CtoTfreqData$genome))
+
+#Subset Elsidron1 data and plot
+CtoTfreqData %>% 
+  filter(sampleID == "ELSIDRON1") %>% 
+  filter(pos == "1") %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=1)) + 
+  ylab("Misincorporation frequency") + 
+  ggtitle("Cytosine to Thymine misincorporation frequency\nat Position 1 of the 5' end") + 
+  annotate("rect", xmin = 3.5, xmax = 4.5, ymin = 0.255, ymax = 0.27, alpha = .2) + 
+  annotate("rect", xmin = 13.5, xmax = 14.5, ymin = 0.16, ymax = 0.18, alpha = .2)
+
+#Plot all data on same axes
+plotCtoT <- CtoTfreqData %>% 
+  filter(pos == "1") %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=1)) + 
+  ylab("Misincorporation frequency") + 
+  ylim(0, 0.52) + 
+  theme(legend.position = "none") +
+  ggtitle("Cytosine to Thymine misincorporation frequency\nat Position 1 of the 5' end")
+
+#Generate a list of 3pGtoA_freq.txt files
+GtoA.Files <- list.files("mapData/highQualMapData", pattern = "3pGtoA_freq.txt", full.names = TRUE, recursive = TRUE)
+# exclude SpyNEW as too few reads to analyse damage patterns
+GtoA.Files <- GtoA.Files[!grepl("SPYNEWL8", GtoA.Files)]
+#Read in each of these files and bind together in a data frame (MUST specify col_types!)
+GtoAfreqData <- GtoA.Files %>% lapply(function(x){
+  read_delim(x, delim = "\t", skip = 1, col_names = FALSE, col_types = cols("i", "n")) %>% 
+    set_colnames(c("pos", "freq")) %>% 
+    mutate(fileName = x)}) %>% 
+  bind_rows()
+
+#Edit fileName to include only sampleID and genome
+GtoAfreqData$fileName <- gsub('mapData/highQualMapData/results_2NoAdapt_', '', GtoAfreqData$fileName)
+GtoAfreqData$fileName <- gsub('_split/3pGtoA_freq.txt', '', GtoAfreqData$fileName)
+GtoAfreqData$fileName <- gsub('_150519_lACGTG_rATTGA', '', GtoAfreqData$fileName)
+GtoAfreqData$fileName <- gsub('L7_lACTGT_rCTCGA', '', GtoAfreqData$fileName)
+GtoAfreqData$fileName <- gsub('L7_lTACTG_rCTCGA', '', GtoAfreqData$fileName)
+GtoAfreqData$fileName <- gsub('L7_lAAGAG_rNONE', '', GtoAfreqData$fileName)
+GtoAfreqData$fileName <- gsub('_L7L8_lGTACC_rCTCGA', '', GtoAfreqData$fileName)
+#Split sampleID and Genome into separate vector
+colsplit(GtoAfreqData$fileName, "_", names = c("sampleID", "genome")) %>% bind_cols(GtoAfreqData) %>% select(-fileName) -> GtoAfreqData
+
+#Add information on cell.wall and bind to data frame
+GtoAfreqData <- GtoAfreqData %>% left_join(cellWall, by = "genome")
+#Sort data based on sampleID [,1] then cellWall [,5]
+GtoAfreqData <- GtoAfreqData[order( GtoAfreqData[,1], GtoAfreqData[,5] ), ]
+
+#Convert genome to factor to prevent ggplot from re-ordering when plotting
+GtoAfreqData$genome <- factor(GtoAfreqData$genome, levels = unique(GtoAfreqData$genome))
+
+#Plot all data on same axes
+plotGtoA <- GtoAfreqData %>% 
+  filter(pos == "1") %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=1)) + 
+  ylab("Misincorporation frequency") + 
+  ylim(0,0.52) +
+  ggtitle("Guanine to Adenine misincorporation frequency\nat Position 1 of the 3' end") 
+
+##plot 5' C->T next to 3' G->A
+grid.arrange(plotCtoT, plotGtoA, ncol=2, widths=c(0.8,1))
+```
+
+Lots of points on a single plot. Several of these data points represent a very low numbers of reads and therefore are questionable. Think it would be better to go back and remove points where there are fewer than 100,500,1000 reads aligning and see if patterns are more clearly visible. Think it would also be preferable if change symbols that represent sampleID so that it is clearer what is recent vs ancient. 
+
+```{r eval=FALSE}
+############### Add info on sample size ##################
+
+#Read-in count data
+highQsplitCount <- read_delim("mapData/highQualMapData/high_qual_split_count.txt", 
+                              delim = "\t", skip = 1, col_names = FALSE) %>% 
+  set_colnames(c("fileName", "count"))
+
+###Edit fileName and split into sampleID and genome
+#Edit fileName
+highQsplitCount$fileName <- gsub('2NoAdapt_', '', highQsplitCount$fileName)
+highQsplitCount$fileName <- gsub('_150519_lACGTG_rATTGA', '', highQsplitCount$fileName)
+highQsplitCount$fileName <- gsub('L7_lACTGT_rCTCGA', '', highQsplitCount$fileName)
+highQsplitCount$fileName <- gsub('L7_lTACTG_rCTCGA', '', highQsplitCount$fileName)
+highQsplitCount$fileName <- gsub('L7_lAAGAG_rNONE', '', highQsplitCount$fileName)
+highQsplitCount$fileName <- gsub('_L7L8_lGTACC_rCTCGA', '', highQsplitCount$fileName)
+highQsplitCount$fileName <- gsub('L8_lGTACC_rCTCGA', '', highQsplitCount$fileName)
+#Split sampleID and Genome into separate vector
+colsplit(highQsplitCount$fileName, "_", names = c("sampleID", "genome")) %>% bind_cols(highQsplitCount) %>% select(-fileName) -> highQsplitCount
+#exclude SPYNEW
+highQsplitCount %>% filter(sampleID != "SPYNEW") -> highQsplitCount
+
+#Bind sample counts to both the CtoT and GtoA ntSubData **WARNING - left_join will coerce genome from factor back to character!!
+CtoTfreqData <- left_join(CtoTfreqData, highQsplitCount)
+GtoAfreqData <- left_join(GtoAfreqData, highQsplitCount)
+
+#Convert genome back to factor to prevent ggplot from re-ordering when plotting
+GtoAfreqData$genome <- factor(GtoAfreqData$genome, levels = unique(GtoAfreqData$genome))
+CtoTfreqData$genome <- factor(CtoTfreqData$genome, levels = unique(CtoTfreqData$genome))
+
+#Filter out results where the sample size is < 100bp and plot:
+CtoTfreqData %>% 
+  filter(count > 100) %>% 
+  filter(pos == "1") %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) + 
+  ylab("Misincorporation frequency") + 
+  ggtitle("Cytosine to thymine misincorporation frequency (> 100 reads per genome)")
+
+GtoAfreqData %>% 
+  filter(count > 100) %>% 
+  filter(pos == "1") %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) + 
+  ylab("Misincorporation frequency") + 
+  ggtitle("Guanine to adenine misincorporation frequency (>100 reads per genome)")
+
+#Filter out results where the sample size is <500bp and plot:
+CtoTfreqData %>% 
+  filter(pos == "1") %>% 
+  filter(count > 500) %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) + 
+  ylab("Misincorporation frequency") + 
+  ggtitle("Cytosine to thymine misincorporation frequency (>500 reads per genome)")
+
+GtoAfreqData %>% 
+  filter(pos == "1") %>% 
+  filter(count > 500) %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) + 
+  ylab("Misincorporation frequency") + 
+  ggtitle("Guanine to adenine misincorporation frequency (>500 reads per genome)")
+
+#Filter out results where the sample size is <1000 bp and plot:
+CtoTfreqData %>% 
+  filter(pos == "1") %>% 
+  filter(count > 1000) %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) + 
+  ylab("Misincorporation frequency") + 
+  ggtitle("Cytosine to thymine misincorporation frequency\n (>1000 reads per genome)")
+
+GtoAfreqData %>% 
+  filter(pos == "1") %>% 
+  filter(count > 1000) %>% 
+  ggplot(aes(x=genome, y=freq, shape=sampleID, colour=cellWall)) + 
+  geom_point(size=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) + 
+  ylab("Misincorporation frequency") + 
+  ggtitle("Guanine to adenine misincorporation frequency\n (>1000 reads per genome)")
+```
+
+This made it easier to separate damage patterns between samples and helped increase pattern of damage associated with gram + vs gram - but still not completely clear. 
+
+Tasks still to complete:
+- put together presentation for Laura next Tuesday
+- Read up on BLAT/ref genome databases
+- re-run mapDamage on length filtered fastq files
+- filter alignments for length filtered reads according to MAPQ of 0 vs MAPQ of 37
+- plot the two MAPQ's separately - is there still damage in the MAPQ 0 reads that is useful
+- is it possible to get the % of A,T,C,G at each end of read from the fastq file directly? (de novo damage analysis)
+- read-up on and try samstat from samtools package to get read length distributions and base quality distributions. 
+
+Awk commands to extract % of reads beginning with A,T,C,G
+
+zcat 2NoAdapt_ELSIDRON1L7_lTACTG_rCTCGA_R1R2_Collapsed.fastq.gz | awk 'BEGIN {OFS = "\n"} {header = $0 ; getline seq ; getline qheader ; getline qseq ; if (seq) '^T') {print header, seq, qheader, qseq}}' > filtered.Elsidron1.fastq
+
+
+#June 14
+
+Today:
+- Running alignment for filtered.Modern.fastq (taking a couple of hours to complete alignments)
+- Once run use script to sort, de-duplicate and mapDamage
+- Read up on bacterial cell wall and protection from damage
+- write script to calculate proportions of A,T,C,G at ends of reads in fastq files (making assumption that adapters have been completely trimmed and that an increased proportion of particular bases is indicative of misincorporation and not simply that certain bases are more likely to form abasic sites)
+- tidy presentation for Laura. Include workflow. Make questions asked and how answered very clear.
+
+Wrote and ran script to process the length filtered fastq files. This took some time to de-bug and a long time to perform alignment and mapDamage:
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#sort_deduplicate_analyse_filteredMappedData
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+MAPDIR=$ROOTDIR/weyrich/filteredMapData
+
+##### BWA Alignment #####
+
+#Change into directory where trimmed_fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to trimData directory"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#bwa alignment of length filtered fastq files
+#  bwa aln -n 0.01 -o 2 -l 1024 -t 4 ~/weyrich/mapData/bwaidx filtered.Elsidron1.fastq > filtered.Elsidron1_MAPPED.sai
+#  bwa aln -n 0.01 -o 2 -l 1024 -t 4 ~/weyrich/mapData/bwaidx filtered.Modern.fastq > filtered.Modern_MAPPED.sai
+
+#Convert .sai alignment file to bam format with the sam header. Exclude unmapped reads.
+bwa samse ~/weyrich/mapData/bwaidx filtered.Elsidron1_MAPPED.sai filtered.Elsidron1.fastq | samtools view -bSh -F0x4 -> $MAPDIR/Elsidron1_bwa.bam
+bwa samse ~/weyrich/mapData/bwaidx filtered.Modern_MAPPED.sai filtered.Modern.fastq | samtools view -bSh -F0x4 -> $MAPDIR/Modern_bwa.bam
+
+#Remove .sai files as no longer needed
+#rm *_MAPPED.sai
+
+################### sambamba sort and rmdup #####################
+
+#Change into directory where mapped_fastq files located
+if [ -d ${MAPDIR} ]
+then
+  echo "Changing to filteredMapData directory"
+  cd ${MAPDIR}
+else
+  echo "Cannot find ${MAPDIR}"
+exit1
+fi
+
+for bam_file in *_bwa.bam
+do
+  PREFIX1=${bam_file%%_bwa.bam}
+  echo "Sorting bam file for ${bam_file}"
+  sambamba sort -o ${PREFIX1}_sorted.bam ${bam_file}
+done
+
+for sort_file in *_sorted.bam
+do
+  PREFIX2=${sort_file%%_sorted.bam}
+  echo "Removing duplicates ${sort_file}"
+  sambamba markdup -r ${sort_file} ${PREFIX2}_rmdup.bam 2> ${PREFIX2}_sambambaLog.txt
+done
+
+#Remove _sorted.bam.bai files as no longer needed
+#rm *_sorted.bam.bai
+#Remove _sorted.bam files as no longer needed
+#rm *_sorted.bam
+
+################# split bam file ####################
+
+#use samtools view & chromosome ID to split into separate bam files
+for rmdup_file in *_rmdup.bam
+  do
+  PREFIX3=${rmdup_file%%_rmdup.bam}
+  echo -e "Splitting ${rmdup_file}"
+  samtools view -h ${rmdup_file} | awk '{if($3 != "NZ_CP014232.1" && $3 != "NC_010729.1" && $3 != "NC_004350.2" && $3 != "NC_016610.1" && $3 != "NZ_CP012196.1" && $3 != "NC_003454.1" && $3 != "NC_002967.9" && $3 != "NC_023036.2" && $3 != "NZ_GG688422.1" && $3 != "NC_000907.1" && $3 != "NC_003454.1" && $3 != "NC_013203.1" && $3 != "NC_013853.1" && $3 != "NC_017860.1" && $3 != "NC_017861.1" && $3 != "NC_003112.2"){print $0}}' | samtools view -Sb > ${HIGH_Q_DIR}/${PREFIX4}_M.oralis_split.bam
+    while read -r line; do 
+        chrID=$(echo "${line}" | cut -f2)
+#        echo "$chrID"
+        ref=$(echo "${line}" | cut -f1)
+#        echo "$ref"
+        samtools view -bSh ${rmdup_file} ${chrID} > ${PREFIX3}_${ref}_split.bam
+      done < ${ROOTDIR}/weyrich/chrID.txt
+  done
+
+###########Separate Low Qual and High Qual mappings for running mapDamage#####################
+
+#Make directory for storing High Qual mapping reads
+if [ ! -d ${HQ_MAPDIR}]
+then
+  echo -e "Making highQualMapData directory"
+  mkdir highQualMapData
+else
+  echo "${HQ_MAPDIR} alread exists"
+fi
+
+#Quality filter bam files ( -q 30) and store in highQualMapData
+for split_file in *_split.bam
+do
+  PREFIX4=${split_file%%_split.bam}
+  samtools view -q 30 -bSh ${split_file} > ${HQ_MAPDIR}/${PREFIX4}_Q30_split.bam
+done
+  
+#Make directory for storing Low Qual mapping reads
+if [ ! -d ${LQ_MAPDIR} ]
+then
+  echo -e "Making lowQualMapData directory"
+  mkdir lowQualMapData
+else
+  echo "${LQ_MAPDIR} already exists"
+fi
+
+#Make directory for storing reads with MAPQ >=10
+if [ ! -d ${MQ_MAPDIR} ]
+then
+  echo -e "Making midQualMapData directory"
+  mkdir midQualMapData
+else
+  echo "${MQ_MAPDIR} already exists"
+fi
+  
+#Quality filter bam files ( MAPQ = 0 ) and store in lowQualMapData
+for split_file in *_split.bam
+do
+  PREFIX4=${split_file%%_split.bam}
+  samtools view -q 10 -bSh -o ${MQ_MAPDIR}/${PREFIX4}_Q10_split.bam -U ${LQ_MAPDIR}/${PREFIX4}_Q0_split.bam ${split_file}
+done
+
+################# mapDamage #########################
+
+#Change into directory where Q30_split.bam files located
+if [ -d ${HQ_MAPDIR} ]
+then
+  echo "Changing to ${HQ_MAPDIR}"
+  cd ${HQ_MAPDIR}
+else
+  echo "Cannot find ${HQ_MAPDIR}"
+exit1
+fi
+
+#Run mapDamage
+for hq_split_file in *_Q30_split.bam
+  do
+    echo "Running mapDamage on ${split_file}"
+    mapDamage -i ${hq_split_file} -r $MAPDIR/combined.fna
+  done
+
+#Change into directory where Q0_split.bam files located
+if [ -d ${LQ_MAPDIR} ]
+then
+  echo "Changing to ${LQ_MAPDIR}"
+  cd ${LQ_MAPDIR}
+else
+  echo "Cannot find ${LQ_MAPDIR}"
+exit1
+fi
+
+#Run mapDamage
+for lq_split_file in *_Q0_split.bam
+  do
+    echo "Running mapDamage on ${split_file}"
+    mapDamage -i ${lq_split_file} -r ~/weyrich/mapData/combined.fna
+  done
+```
+
+#############################
+Cell Wall structure and protection against damage
+
+Cell wall structure notes (The Bacterial Cell Envelope, Silhavy, Kahne & Walker, 2010)
+- Gram negative bacteria typically have an inner membrane surrounded by a peptidoglycan cell wall (made up of repeating units od disaccharide N-acetyl glucosamine-N-aceyl muramic acid) and an outer membrane (consisting of an inner leaflet of phospholibids and an outer leaflet of glycolipids, mainly lipopolysaccharides)
+- Gram positive bacteria lack and outer membrane and their peptidoglycan cell wall is much thicker as it is composed of many layers (30-100nm compared to gram negative bacteria whose petidoglycan is only a few nanometers thick)
+- There are also significant differences between the cell wall structure of species 
+
+Based on this very broad description it could be argued that gram positive cell wall better at protecting against DNA damage.
+
+###################################
+
+Wrote and ran script for calculating base_proportions at beginning and end of sequenced read:
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#Calculate proportion of each base at ends of fastq reads
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+
+################    ######################
+
+#Change into directory where trimmed_fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to trimData directory"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#Generate text file for storing base proportions
+if [ ! -f base_proportions.txt ]
+then
+  echo -e 'Creating file base_proportions.txt'
+  echo -e 'fileName\tend\tpos\tNo.T\tNo.A\tNo.C\tNo.G\ttotalFastq' > base_proportions.txt
+else
+  echo  'base_proportions.txt already exists'
+fi
+
+#Count fastq reads and number each base at start of reads
+#Calculate as proportion
+
+for fastq in *fastq.gz
+  do
+    FASTQcount=$(zcat ${fastq} | egrep -c '^@M_HWI')
+    echo -e "${FASTQcount}"
+    beginT1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^T')
+    echo -e "${beginT1}"
+    beginA1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^A')
+    beginC1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^C')
+    beginG1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^G')
+    echo -e "${fastq}\t5p\t1\t${beginT1}\t${beginA1}\t${beginC1}\t${beginG1}\t${FASTQcount}" >> base_proportions.txt
+    beginT2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^.T')
+    beginA2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^.A')
+    beginC2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^.C')
+    beginG2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^.G')
+    echo -e "${fastq}\t5p\t2\t${beginT2}\t${beginA2}\t${beginC2}\t${beginG2}\t${FASTQcount}" >> base_proportions.txt
+    beginT3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^..T')
+    beginA3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^..A')
+    beginC3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^..C')
+    beginG3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^..G')
+    echo -e "${fastq}\t5p\t3\t${beginT3}\t${beginA3}\t${beginC3}\t${beginG3}\t${FASTQcount}" >> base_proportions.txt
+    endT1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'T$')
+    endA1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'A$')
+    endC1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'C$')
+    endG1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'G$')
+    echo -e "${fastq}\t3p\t1\t${endT1}\t${endA1}\t${endC1}\t${endG1}\t${FASTQcount}" >> base_proportions.txt
+    endT2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'T.$')
+    endA2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'A.$')
+    endC2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'C.$')
+    endG2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'G.$')
+    echo -e "${fastq}\t3p\t2\t${endT2}\t${endA2}\t${endC2}\t${endG2}\t${FASTQcount}" >> base_proportions.txt
+    endT3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'T..$')
+    endA3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'A..$')
+    endC3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'C..$')
+    endG3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'G..$')
+    echo -e "${fastq}\t3p\t3\t${endT3}\t${endA3}\t${endC3}\t${endG3}\t${FASTQcount}" >> base_proportions.txt
+  done
+```
+
+#June 15
+
+Tasks today:
+- Plot data from base_proportions.txt
+- Plot lowQual and highQual filtered data and compare to previous results
+- Questions Jimmy about whether BLAT most appropriate method of checking accuracy of alignments (givent 95% identity cut-off)
+- Outline presentation for Laura next Wednesday
+
+#########################
+
+Plotted base proportions. 3 bases from each end not enough data. Went back and edited script to count 5 bases from each end. Also altered 3p positions to negative values to assist with plotting. 
+
+Edited script:
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#Calculate proportion of each base at ends of fastq reads
+
+#Specify variables
+ROOTDIR=/home/a1698312
+TRIMDIR=$ROOTDIR/weyrich/trimData
+
+################    ######################
+
+#Change into directory where trimmed_fastq files located
+if [ -d ${TRIMDIR} ]
+then
+  echo "Changing to trimData directory"
+  cd ${TRIMDIR}
+else
+  echo "Cannot find ${TRIMDIR}"
+exit1
+fi
+
+#Generate text file for storing base proportions
+if [ ! -f base_proportions.txt ]
+then
+  echo -e 'Creating file base_proportions.txt'
+  echo -e 'fileName\tend\tpos\tNo.T\tNo.A\tNo.C\tNo.G\ttotalFastq' > base_proportions.txt
+else
+  echo  'base_proportions.txt already exists'
+fi
+
+#Count fastq reads and number each base at start of reads
+#Calculate as proportion
+
+for fastq in *fastq.gz
+  do
+    echo -e "Counting bases in ${fastq}"
+    FASTQcount=$(zcat ${fastq} | egrep -c '^@M_HWI')
+    beginT1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^T')
+    beginA1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^A')
+    beginC1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^C')
+    beginG1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^G')
+    echo -e "${fastq}\t5p\t1\t${beginT1}\t${beginA1}\t${beginC1}\t${beginG1}\t${FASTQcount}" >> base_proportions.txt
+    beginT2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^.T')
+    beginA2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^.A')
+    beginC2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^.C')
+    beginG2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^.G')
+    echo -e "${fastq}\t5p\t2\t${beginT2}\t${beginA2}\t${beginC2}\t${beginG2}\t${FASTQcount}" >> base_proportions.txt
+    beginT3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^..T')
+    beginA3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^..A')
+    beginC3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^..C')
+    beginG3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^..G')
+    echo -e "${fastq}\t5p\t3\t${beginT3}\t${beginA3}\t${beginC3}\t${beginG3}\t${FASTQcount}" >> base_proportions.txt
+    beginT4=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^...T')
+    beginA4=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^...A')
+    beginC4=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^...C')
+    beginG4=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^...G')
+    echo -e "${fastq}\t5p\t4\t${beginT4}\t${beginA4}\t${beginC4}\t${beginG4}\t${FASTQcount}" >> base_proportions.txt
+    beginT5=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^....T')
+    beginA5=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^....A')
+    beginC5=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^....C')
+    beginG5=$(zcat ${fastq} | sed -n '2~4p' | egrep -c '^....G')
+    echo -e "${fastq}\t5p\t5\t${beginT5}\t${beginA5}\t${beginC5}\t${beginG5}\t${FASTQcount}" >> base_proportions.txt
+    endT1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'T$')
+    endA1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'A$')
+    endC1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'C$')
+    endG1=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'G$')
+    echo -e "${fastq}\t3p\t-1\t${endT1}\t${endA1}\t${endC1}\t${endG1}\t${FASTQcount}" >> base_proportions.txt
+    endT2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'T.$')
+    endA2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'A.$')
+    endC2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'C.$')
+    endG2=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'G.$')
+    echo -e "${fastq}\t3p\t-2\t${endT2}\t${endA2}\t${endC2}\t${endG2}\t${FASTQcount}" >> base_proportions.txt
+    endT3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'T..$')
+    endA3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'A..$')
+    endC3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'C..$')
+    endG3=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'G..$')
+    echo -e "${fastq}\t3p\t-3\t${endT3}\t${endA3}\t${endC3}\t${endG3}\t${FASTQcount}" >> base_proportions.txt
+    endT4=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'T...$')
+    endA4=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'A...$')
+    endC4=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'C...$')
+    endG4=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'G...$')
+    echo -e "${fastq}\t3p\t-4\t${endT4}\t${endA4}\t${endC4}\t${endG4}\t${FASTQcount}" >> base_proportions.txt
+    endT5=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'T....$')
+    endA5=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'A....$')
+    endC5=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'C....$')
+    endG5=$(zcat ${fastq} | sed -n '2~4p' | egrep -c 'G....$')
+    echo -e "${fastq}\t3p\t-5\t${endT5}\t${endA5}\t${endC5}\t${endG5}\t${FASTQcount}" >> base_proportions.txt
+  done
+```
+
+Data manipulation and plotting performed in R with following code:
+
+```{r eval=FALSE}
+#De novo assessment of aDNA damage
+#Calculate and plot proportions of each base at the ends of sequenced reads
+
+#read-in text file base_proportions.txt and assign to object
+baseProp <- read_delim("trimData/base_proportions.txt", delim = "\t", 
+                       col_names = TRUE)
+#edit fileName to include only sampleID
+colsplit(baseProp$fileName, "_", c("adapter", "sampleID", "extra")) %>% 
+  select(sampleID) %>% 
+  bind_cols(baseProp) %>% 
+  select(-fileName) -> baseProp
+#Calculate proportion of each base by dividing by totalFastq, melt table and re-assign to object
+baseProp %>% mutate(No.T = No.T/totalFastq) %>% 
+  mutate(No.A = No.A/totalFastq) %>% 
+  mutate(No.C = No.C/totalFastq) %>% 
+  mutate(No.G = No.G/totalFastq) %>% 
+  select(-totalFastq) %>% 
+  melt(id.vars = c("sampleID", "end", "pos")) -> baseProp
+
+#Plot Elsidron1 5p and 3p data side-by-side
+Els5pPlot <- baseProp %>% filter(end == "5p") %>% 
+  filter(sampleID == "ELSIDRON1L7") %>% 
+  ggplot(aes(x=pos, y=value, colour=variable)) + 
+  geom_line() + 
+  theme_classic() + 
+  ylim(0,0.55) +
+  xlab("") + 
+  guides(colour = "none") + 
+  ylab("Proportion of bases in sequenced read") +
+  ggtitle ("Elsidron1") +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)))
+
+Els3pPlot <- baseProp %>% filter(end == "3p") %>%
+  filter(sampleID == "ELSIDRON1L7") %>% 
+  ggplot(aes(x=pos, y=value, colour=variable)) + 
+  geom_line() + 
+  theme_classic() + 
+  ylim(0,0.55) +
+  scale_colour_discrete(name="Base", labels=c("T", "A", "C", "G")) +
+  xlab("") + 
+  ylab("")
+
+
+#grid.arrange(Els5pPlot, Els3pPlot, ncol=2, widths=c(0.8,1), top="Elsidron1")
+
+#Plot Modern 5p and 3p base proportions
+Mod5pPlot <- baseProp %>% filter(end == "5p") %>%
+  filter(sampleID == "ModernL7") %>%
+  ggplot(aes(x=pos, y=value, colour=variable)) + 
+  geom_line() + 
+  theme_classic() + 
+  ylim(0,0.55) +
+  xlab("Position from 5' end of read") + 
+  guides(colour = "none") + 
+  ylab("Proportion of bases in sequenced read") +
+  ggtitle ("Modern") +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)))
+
+Mod3pPlot <- baseProp %>% filter(end == "3p") %>%
+  filter(sampleID == "ModernL7") %>% 
+  ggplot(aes(x=pos, y=value, colour=variable)) + 
+  geom_line() + 
+  theme_classic() + 
+  ylim(0,0.55) +
+  scale_colour_discrete(name="Base", labels=c("T", "A", "C", "G")) +
+  xlab("Position from 3' end of read") + 
+  ylab("")
+
+grid.arrange(Mod5pPlot, Mod3pPlot, Els5pPlot, Els3pPlot, ncol=2, widths=c(0.8,1))
+```
+########################
+
+Began plotting length data for lowQualLengthFiltered and highQualLengthFiltered data.
+Observed that the number of reads in lowQualLengthFiltered data 1/10th what in highQual.
+Think it best to go back and get MAPQ counts and compare to results before LengthFiltering (is removing very short reads getting rid of vast majority of lowQual alignments??)
+
+Counted filtered_mapped reads at each MAPQ using following script:
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#count *bwa_bam and *rmdup.bam and *split.bam files at each MAPQ after length filtering
+
+#Specify variables
+ROOTDIR=/home/a1698312
+MAPDIR=$ROOTDIR/weyrich/filteredMapData
+LQ_MAPDIR=$MAPDIR/lowQualMapData
+HQ_MAPDIR=$MAPDIR/highQualMapData
+
+########## Count aligned reads ############
+
+#Change into directory where aln_files located
+if [ -d ${MAPDIR} ]
+then
+  echo "Changing to mapData directory"
+  cd ${MAPDIR}
+else
+  echo "Cannot find ${MAPDIR}"
+exit1
+fi
+
+#Count reads in *bwa.bam at different MAPQ scores
+for bwa_file in *bwa.bam
+  do
+    echo "Counting reads in ${bwa_file}"
+    MAPCOUNT=$(samtools view ${bwa_file} | cut -f5 | sort | uniq -c)
+    echo -e "#Read\tMAPQ" > ${bwa_file%%.bam}_count.txt
+    echo -e "${MAPCOUNT}" >> ${bwa_file%%.bam}_count.txt
+  done
+  
+#Count reads in rmdup.bam at different MAPQ scores
+for rmdup_file in *rmdup.bam
+do
+  echo "Counting reads in ${rmdup_file}"
+  MAPCOUNT2=$(samtools view ${rmdup_file} | cut -f5 | sort | uniq -c)
+  echo -e "#Read\tMAPQ" > ${rmdup_file%%.bam}_count.txt
+  echo -e "${MAPCOUNT2}" >> ${rmdup_file%%.bam}_count.txt
+done
+
+
+#Generate text file for storing alignment count data for each genome
+if [ ! -f filtered_split_count.txt ]
+then
+  echo -e 'Creating file filtered_split_count.txt'
+  echo -e "#Reads  MAPQ" > filtered_split_count.txt
+else
+  echo  'filtered_split_count.txt already exists'
+fi
+
+#Count reads at different MAPQ scores for each rmdup.bam
+for split_file in *split.bam
+  do
+    echo "Counting reads in ${split_file}"
+    MAPCOUNT3=$(samtools view ${split_file} | cut -f5 | sort | uniq -c)
+    echo -e "${split_file}" >> filtered_split_count.txt
+    echo -e "${MAPCOUNT3}" >> filtered_split_count.txt
+  done
+```
+
+#June 16
+
+Today:
+- Determine the MAPQ of very short reads (<30bp) - are these short reads which are skewing the fragment length data being filtered out anyway with MAPQ filter?
+
+Results of data manipulation and plotting - No, very short reads do also align with high MAPQ.
+Still have question - how reliable are these alignments??? MAPQ does not appear to be a good method for filtering data before running mapDamage analysis
+
+```{r eval=FALSE}
+####Plot number of aligned reads before and after de-duplication by MAPQ ranges
+
+#Add categorical bins (MAPQrange)
+bwaMAPQcount$MAPQrange <- 
+  cut(bwaMAPQcount$MAPQ, breaks = c(0,10,20,30,40), 
+      labels = c("0-9", "10-19", "20-29", "30-39"), 
+      right = FALSE)
+#split data frame by sampleID and summarise counts within each MAPQrange and return to single data frame
+bwaMAPQcount %>% split(f = .$fileName) %>% 
+  lapply(function(x){x %>% 
+      select(-fileName, -MAPQ) %>% 
+      group_by(MAPQrange) %>% 
+      summarise_each(funs(sum))}) %>% 
+  bind_rows(.id = "sampleID") -> bwaMAPQcount
+
+#Read-in rmdupCount data, summarise counts within each MAPQrange and return as single data frame
+
+#List *bwa_count.txt files 
+rmdup_count_Files <- list.files("filteredMapData", pattern = "rmdup_count.txt", full.names = TRUE)
+#Read in data from all files on the list and bind into a single data frame
+rmdupMAPQcount <- rmdup_count_Files %>% lapply(function(x){read.csv(x, sep="", skip = 1, header = FALSE) %>% 
+    set_colnames(c("rmdupCount", "MAPQ")) %>% 
+    mutate(fileName = x)}) %>% 
+  bind_rows()
+#Edit fileName to include only sampleID
+rmdupMAPQcount$fileName <- gsub('filteredMapData/', '', rmdupMAPQcount$fileName)
+rmdupMAPQcount$fileName <- gsub('_rmdup_count.txt', '', rmdupMAPQcount$fileName)
+#Add MAPQcategorical bins
+rmdupMAPQcount$MAPQrange <- 
+  cut(rmdupMAPQcount$MAPQ, breaks = c(0,10,20,30,40), 
+      labels = c("0-9", "10-19", "20-29", "30-39"), 
+      right = FALSE)
+#split data frame by sampleID, summarise by MAPQrange and bind together
+rmdupMAPQcount %>% split(f = .$fileName) %>% 
+  lapply(function(x){x %>% 
+      select(-fileName, -MAPQ) %>% 
+      group_by(MAPQrange) %>% 
+      summarise_each(funs(sum))}) %>% 
+  bind_rows(.id = "sampleID") -> rmdupMAPQcount
+#Use left_join to bind together bwaCount and rmdupCount data into a new object 'MAPQcount'
+left_join(bwaMAPQcount, rmdupMAPQcount) -> MAPQcount
+
+#Plot number of reads before and after de-duplication
+MAPQcount %>% melt(id.vars  = c("sampleID", "MAPQrange")) %>% 
+  ggplot(aes(x=MAPQrange, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  facet_wrap(~sampleID) + 
+  guides(fill=guide_legend(title = NULL)) + 
+  scale_fill_discrete(labels=c("Before", "After")) + 
+  xlab("MAPQ score") + 
+  ylab("Number of reads") + 
+  scale_y_continuous(labels = scales::comma) + 
+  ggtitle("Number of reads by MAPQ score, before and after de-duplication\n(Read length >30bp)")
+
+#Add up the number of rmdup reads and plot pie chart with non-duplicate vs duplicate
+
+#Calculate total number of aligned reads per sample and assign to object bwaCount
+rmdupMAPQcount %>% select(-MAPQrange) %>% 
+  group_by(sampleID) %>% 
+  summarise_each(funs(sum)) %>% 
+  left_join(bwaCount, by = "sampleID") -> bwaCount
+#Calculate the number of duplicate reads and add to data frame
+bwaCount %>% mutate(dupCount = bwaCount-rmdupCount) -> bwaCount
+#Convert counts to proportions and assign to object 'filtPropDup'
+bwaCount %>% select(-fastqCount) %>% 
+  mutate(rmdupCount = rmdupCount/bwaCount) %>% 
+  mutate(dupCount = dupCount/bwaCount) %>% 
+  select(-bwaCount)  %>% 
+  melt(id.vars = "sampleID") -> filtPropDup
+#Round values, convert to percentage and plot as pie chart
+filtPropDup[,3] <- round(filtPropDup[,3],4)
+filtPropDup <- filtPropDup %>% mutate(value = value*100)
+ggplot(filtPropDup, aes(x="", y=value, fill=variable)) + 
+  geom_bar(stat = "identity") + 
+  coord_polar("y", start = 0) + 
+  scale_fill_manual(values=c("#F8766D", "#00BFC4"), 
+                    breaks = c("rmdupCount", "dupCount"), 
+                    labels = c("Non-duplicate", "Duplicate")) + 
+  blank_theme + 
+  facet_wrap(~sampleID) + 
+  geom_text(aes(label=value), position = position_stack(vjust = 0.5)) + 
+  theme(axis.text.x = element_blank()) + 
+  guides(fill=guide_legend(title = NULL)) + 
+  ggtitle("Proportion of aligned reads identified as duplicate (Read length > 30bp)")
+
+#####Removing short reads does not appear to have altered much
+
+##Try plotting filtered split count and see if there has been reduction in reads aligning to specific genomes
+#Read in csv file
+filtSplitCount <- read.csv("filteredMapData/filtered_split_count.txt", sep = "", skip = 1, header = FALSE) %>% 
+  set_colnames(c("count", "MAPQ"))
+#Split at .bam to generate a list
+filtSplitCount <- filtSplitCount %>% mutate(bam = grepl("bam", count), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Generate vector of fileNames to assign to list names
+splitBamList <- list.files("filteredMapData", pattern = "_split.bam")
+splitBamList <- gsub('_split.bam', '', splitBamList)
+#Use this list to assign names to componments of filtSplitCount list
+names(filtSplitCount) <- splitBamList
+#Convert back into data frame using 
+filtSplitCount <- filtSplitCount %>% bind_rows(.id = "fileName") %>% filter(MAPQ != "NA") %>% select(-bam, -fileNo)
+#Convert count variable from factor to numeric
+filtSplitCount$count <- as.numeric(as.character(filtSplitCount$count))
+#Obtain total reads aligning for each sampleID & Genome - assign to own object
+filtSplitCount %>% select(-MAPQ) %>% group_by(fileName) %>% summarise_each(funs(sum)) -> totalFiltSplitMapped
+  ##Looking at totals, we see filtering out very short reads has reduced number mapping to M.oralis
+
+#Split fileName into sampleID and genome
+filtSplitCount <- colsplit(filtSplitCount$fileName, "_", names = c("sampleID", "genome")) %>% 
+  bind_cols(filtSplitCount) %>% 
+  select(-fileName)
+#Identify number aligning with MAPQ > 30
+#filtSplitCount %>% filter(MAPQ >= 30) %>% 
+#  ggplot(aes(x=genome, y=count)) + 
+#  geom_bar(stat = "identity") + 
+#  facet_wrap(~sampleID) + 
+#  theme_bw()
+
+#Read in split counts for non length filtered data
+splitCount <- read.csv("mapData/lowQualMapData/low_qual_split_count.txt", sep = "", skip = 1, header = FALSE) %>% 
+  set_colnames(c("count", "MAPQ"))
+#Split at .bam to generate a list
+splitCount <- splitCount %>% mutate(bam = grepl("bam", count), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Generate vector of fileNames to assign to list names
+splitBamList <- list.files("mapData/lowQualMapData", pattern = "_split.bam")
+splitBamList <- gsub('_split.bam', '', splitBamList)
+splitBamList <- gsub('2NoAdapt_', '', splitBamList)
+splitBamList <- gsub('_150519_lACGTG_rATTGA', '', splitBamList)
+splitBamList <- gsub('L7_lTACTG_rCTCGA', '', splitBamList)
+splitBamList <- gsub('L7_lAAGAG_rNONE', '', splitBamList)
+splitBamList <- gsub('L8_lGTACC_rCTCGA', '', splitBamList)
+splitBamList <- gsub('_L7', '', splitBamList)
+splitBamList <- gsub('L7_lACTGT_rCTCGA', '', splitBamList)
+#Use this list to assign names to componments of filtSplitCount list
+names(splitCount) <- splitBamList
+#Convert back into data frame using 
+splitCount <- splitCount %>% bind_rows(.id = "fileName") %>% filter(MAPQ != "NA") %>% select(-bam, -fileNo)
+#Convert count variable from factor to numeric
+splitCount$count <- as.numeric(as.character(splitCount$count))
+#Split fileName into sampleID and genome
+splitCount <- colsplit(splitCount$fileName, "_", names = c("sampleID", "genome")) %>% 
+  bind_cols(splitCount) %>% 
+  select(-fileName)
+#Extract information for just Modern and Elsidron1 and assign to new object
+splitCount %>% filter(sampleID == "Modern") -> nonFiltCount
+splitCount %>% filter(sampleID == "ELSIDRON1") %>% bind_rows(nonFiltCount) -> nonFiltCount
+#Edit sampleID to be same as filtSplitCount
+nonFiltCount$sampleID <- gsub('ELSIDRON1', 'Elsidron1', nonFiltCount$sampleID)
+#Change variable names
+names(nonFiltCount) <- c("sampleID", "genome", "nonFiltcount", "MAPQ")
+#Bind information into new data frame using left_join
+splitMAPQcount <- left_join(filtSplitCount, nonFiltCount)
+#Add MAPQranges to dataframe
+splitMAPQcount$MAPQrange <- 
+  cut(splitMAPQcount$MAPQ, breaks = c(0,10,20,30,40), 
+      labels = c("0-9", "10-19", "20-29", "37"), 
+      right = FALSE)
+#Filter by sampleID, split by genome, summarise counts withing each MAPQrang
+splitMAPQcount %>% filter(sampleID == "Modern") %>% 
+  split(f = .$genome) %>% 
+  lapply(function(x){x %>% 
+      select(-sampleID, -genome, -MAPQ) %>% 
+      group_by(MAPQrange) %>% 
+      summarise_each(funs(sum))}) %>%
+  bind_rows(.id = "genome") -> ModernMAPQcount
+
+#Plot counts before and after length filtering by genome and use facet_wrap for MAPQ range
+ModernMAPQcount %>% 
+  melt(id.vars = c("genome", "MAPQrange")) %>% 
+  ggplot(aes(x=genome, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  facet_wrap(~MAPQrange, scales = "free") + 
+  theme_bw() +
+  ggtitle("Aligned read count before and after length filtering (Modern)") + 
+  scale_y_continuous(labels = scales::comma) +
+  guides(fill=guide_legend(title = NULL)) + 
+  scale_fill_discrete(labels=c("Reads >30bp", "All reads")) +
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=.5)) +
+  ylab("Number of reads aligning to genome") 
+
+#Replot after removing highly abudant species (F.nucleatum, N.meningitidis)
+ModernMAPQcount %>% melt(id.vars = c("genome", "MAPQrange")) %>% 
+  filter(genome != "F.nucleatum") %>% 
+  filter(genome != "N.meningitidis") %>% 
+  ggplot(aes(x=genome, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  facet_wrap(~MAPQrange, scales = "free") + 
+  theme_bw()
+
+#Convert counts to proportions (i.e. divide count/rmdupCount; divide nonFiltcount/nonFiltRmDupCount)
+
+#Add up number of reads aligned to each genome before and after filtering
+ModernMAPQcount %>% select(-MAPQrange) %>% group_by(genome) %>% summarise_each(funs(sum)) -> ModernSplitTotals
+#Need to first split the Elsidron1 data and collate withing MAPQrange
+splitMAPQcount %>% 
+  filter(sampleID == "Elsidron1") %>% 
+  split(f = .$genome) %>% 
+  lapply(function(x){x %>% 
+      select(-sampleID, -genome, -MAPQ) %>% 
+      group_by(MAPQrange) %>% 
+      summarise_each(funs(sum))}) %>% 
+  bind_rows(.id = "genome") -> Elsidron1MAPQcount
+#Add up totals for Elsidron1
+Elsidron1MAPQcount %>% select(-MAPQrange) %>% group_by(genome) %>% summarise_each(funs(sum)) -> Elsidron1SplitTotals
+#Bind totals to each other and then to splitMAPQcount
+Elsidron1SplitTotals %>% mutate(sampleID = "Elsidron1") -> Elsidron1SplitTotals
+ModernSplitTotals %>% mutate(sampleID = "Modern") -> ModernSplitTotals
+Elsidron1SplitTotals %>% bind_rows(ModernSplitTotals) -> splitTotals
+names(splitTotals) <- c("genome", "totalFilt", "totalNonFilt", "sampleID")
+#Re-make the splitMAPQcount data frame with counts in MAPQranges
+ModernMAPQcount %>% mutate(sampleID = "Modern") -> ModernMAPQcount
+Elsidron1MAPQcount %>% mutate(sampleID = "Elsidron1") -> Elsidron1MAPQcount
+Elsidron1MAPQcount %>% bind_rows(ModernMAPQcount) -> splitMAPQcount
+#Bind splitTotals to splitMAPQcount
+left_join(splitMAPQcount, splitTotals) -> splitMAPQcount
+#Convert counts to proportions and plot
+splitMAPQcount %>% 
+  mutate(propFilt = count/totalFilt) %>% 
+  mutate(propNonFilt = nonFiltcount/totalNonFilt) %>% 
+  select(-count, -nonFiltcount, -totalFilt, -totalNonFilt) %>% 
+  melt(id.vars = c("genome", "MAPQrange", "sampleID")) %>% 
+  filter(sampleID == "Modern") %>% 
+  ggplot(aes(x=genome, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  facet_wrap(~MAPQrange, scales = "free") + 
+  theme_bw() + 
+  ggtitle("Proportion of reads aligned to genome, with and without length filtering (Modern)") + 
+  scale_fill_discrete(labels=c("Reads >30bp", "All reads")) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) + 
+  ylab("Proportion of reads")
+
+splitMAPQcount %>% 
+  mutate(propFilt = count/totalFilt) %>% 
+  mutate(propNonFilt = nonFiltcount/totalNonFilt) %>% 
+  select(-count, -nonFiltcount, -totalFilt, -totalNonFilt) %>% 
+  melt(id.vars = c("genome", "MAPQrange", "sampleID")) %>% 
+  filter(sampleID == "Elsidron1") %>% 
+  ggplot(aes(x=genome, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  facet_wrap(~MAPQrange, scales = "free") + 
+  theme_bw() + 
+  ggtitle("Proportion of reads aligned to genome, with and without length filtering (Elsidron1)") + 
+  scale_fill_discrete(labels=c("Reads >30bp", "All reads")) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) + 
+  ylab("Proportion of reads")
+
+#Plot number of low abundant species (<10,000 reads), before and after length filtering
+#splitMAPQcount %>% filter(MAPQrange == "37") %>% 
+#  filter(sampleID == "Modern") %>% 
+#  filter(count < 10000) %>% 
+#  select(-totalFilt, -totalNonFilt) %>% 
+#  melt(id.vars = c("genome", "MAPQrange", "sampleID")) %>% 
+#  ggplot(aes(x=genome, y=value, fill=variable)) + 
+#  geom_bar(stat = "identity", position = position_dodge()) + 
+#  theme_bw()
+
+#Reorder columns before melting (hope to re-order bars when plotting)
+splitMAPQcount <- splitMAPQcount[, c(5,1,2,4,3,7,6)]
+#Specify labels for facet_wrap
+facet.labels <- c('0-9' = "MAPQ 0-9", '20-29' = "MAPQ 20-25", '37' = "MAPQ 37")
+
+#Plot low abundant species (<10,000 reads), before and after length filtering
+#pdf("plots/NumberLowAbundantReadsBeforeAfterLengthFilter.pdf")
+splitMAPQcount %>% 
+  filter(totalNonFilt < 10000) %>% filter(MAPQrange != "10-19") %>% 
+  select(-totalNonFilt, -totalFilt) %>% 
+  melt(id.vars = c("sampleID", "genome", "MAPQrange")) %>% 
+  ggplot(aes(x=genome, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  facet_wrap(sampleID ~ MAPQrange, scales = "free", labeller=labeller(MAPQrange = facet.labels)) + 
+  ggtitle("Number of reads aligned to genome, with and without length filtering") + 
+  scale_fill_discrete(labels=c("All reads", "Reads >=30bp")) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1), axis.title.x = element_blank()) + ylab("Number of reads") + 
+  theme(legend.position="bottom", legend.title=element_blank())
+#dev.off()
+
+#Plot very low abundant species (<5,000 reads), before and after length filtering
+#pdf("plots/NumberVeryLowAbundantSpeciesBeforeAfterLengthFiltering.pdf")
+splitMAPQcount %>% 
+  filter(totalNonFilt < 5000) %>% 
+  filter(MAPQrange != "10-19") %>% 
+  select(-totalNonFilt, -totalFilt) %>% 
+  melt(id.vars = c("sampleID", "genome", "MAPQrange")) %>% 
+  ggplot(aes(x=genome, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  facet_grid(sampleID ~ MAPQrange, labeller = labeller(MAPQrange = facet.labels)) + 
+  scale_fill_discrete(labels=c("All reads", "Reads >=30bp")) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1), axis.title.x = element_blank(), 
+        legend.position = "bottom", legend.title = element_blank()) + ylab("Numbe of reads") + 
+  ggtitle("Effect of length filtering on number of reads aligning to genomes of low abundant species\n(Total reads <5000)")
+#dev.off()
+
+############ Try plotting length boxplots of highQualData now that length filtering has occured ##############
+```
+
+#June 19
+
+Meeting with Jimmy at 10am:
+- BLAT/BLAST 
+  - I thought we BLAT/BLAST as believe reads are being incorrectly aligned
+  - Jimmy say that alignment is alignment. May be aligning to a region conserved between species but still representative of that species. Problem with bwa is instead that alignment is too stringent (excluding reads that may align with that genome)
+  - High or insignificant E-val with Blast due to large size of database aligning with.
+  - suggest create flow diagram to show Laura about what considering doing
+  - Need to determine what sort of database is appropriate to use (will have to download from NCBI or ensembl)
+- gitHub
+  - Jimmy sent tutorial for setting up ssh key on VM. Was able to do this and can now push to gitHub
+- Ideas to include in presentation for Laura Wednesday:
+  - make a table describing times to complete different components of analysis
+  - use as justification for de novo assessment of damage based on increased % T/A at ends of reads
+  - Include my thoughts/justifications/questions (demonstrate critical thinking)
+  - Include questions/hypotheses addressing with specific plots
+  - Need to generate logical flow in presentation.
+  
+Worked on presentation. This required sorting ideas in order. May be beneficial in future to put each plot I generate into a presentation with hypotheses and results as a way of ordering my research and maintaining logical progression.
+
+#June 20
+
+Working on presentation for Laura. As a gap identified (i.e. part of a question not addressed or missing plot/data that describes this) going back to R and re-plot or extract data.
+
+Effect of MAPQ filtering on proportion of reads available for mapDamage assessment
+- have count data but believe it will be easier to see differences in relative abudance if these plotted as proportions
+- to do this need to tally total number of reads with each MAPQ for a particular sample
+
+```{r eval=FALSE}
+###Plot proportion of elsidron1 reads aligning to each genome by MAPQrange
+#calculate total number of reads at each MAPQ and assign to object
+elsidron1MAPQcount %>% select(-genome) %>% group_by(MAPQrange) %>% summarise_each(funs(sum)) -> elsidron1TotalMAPQcount
+#left_join with elsidron1MAPQcount (in future may want to change names first)
+elsidron1MAPQcount <- left_join(elsidron1MAPQcount, elsidron1TotalMAPQcount, by = "MAPQrange")
+#calculate proportion of reads and plot
+pdf("plots/elsidron1.abundance.prop.by.MAPQ.pdf")
+elsidron1MAPQcount %>% mutate(propReads = No.Reads.x/No.Reads.y) %>% 
+  ggplot(aes(x=MAPQrange, y=propReads, fill=genome)) + 
+  geom_bar(colour="white", stat = "identity") + 
+  theme_bw() +
+  xlab("MAPQ range") +
+  ylab("Proportion of reads") + 
+  ggtitle("Proportion of reads aligning to each genome by MAPQ score (Elsidron1)")
+dev.off()
+```
+
+#June 21
+
+Still working on presentation for Laura.
+Re-plotted normalised fragment lengths for all 6 samples so that was dividing by total number of reads for that genome rather than total number of reads for sample.
+Also used facet wrap to more easily visualise differences in fragment lengths for each genome.
+
+```{r eval=FALSE}
+#Read-in text file and assign to object
+highQsplitCount <- 
+  read_delim(file="mapData/highQualMapData/high_qual_split_count.txt", delim = "\t", skip = 1, col_names = FALSE) %>% 
+  set_colnames(c("fileName", "count"))
+#Split fileName into sampleID and genome
+highQsplitCount <- colsplit(highQsplitCount$fileName, "_", names = c("Adapt", "sample")) %>% 
+  bind_cols(highQsplitCount) %>% select(-Adapt, -fileName)
+highQsplitCount <- colsplit(highQsplitCount$sample, "_l", names = c("sampleID", "extra")) %>%
+  bind_cols(highQsplitCount) %>% select(-sample)
+highQsplitCount <- colsplit(highQsplitCount$extra, "_r", names = c("misc1", "almostGenome")) %>%
+  bind_cols(highQsplitCount) %>% select(-extra, -misc1)
+highQsplitCount <- colsplit(highQsplitCount$almostGenome, "_", names = c("misc2", "genome")) %>%
+  bind_cols(highQsplitCount) %>% select(-almostGenome, -misc2)
+#Re-calculate into proportions and plot
+highQsplitCount %>% select(-genome) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalQ30
+names(totalQ30) <- c("sampleID", "totalCount")
+highQsplitCount <- left_join(highQsplitCount, totalQ30, by = "sampleID")
+#highQsplitCount %>% mutate(prop = count/totalCount) -> highQsplitCount
+
+#First edit highQsplitCount so that sampleID identical to lengthData
+highQsplitCount$sampleID <- gsub('_150519', '', highQsplitCount$sampleID)
+highQsplitCount$sampleID <- gsub('L7', '', highQsplitCount$sampleID)
+highQsplitCount$sampleID <- gsub('L8', '', highQsplitCount$sampleID)
+highQsplitCount$sampleID <- gsub('_', '', highQsplitCount$sampleID)
+
+#Split lengthData by sampleID and then by genome, summarise occ of each length and bind back together
+lengthData %>% select(-std) %>% split(f = .$sampleID) %>% lapply(function(x){x %>% select(-sampleID) %>% split(f = .$genome) %>% 
+      lapply(function(z){z %>% select(-genome) %>% group_by(length) %>% summarise_each(funs(sum))}) %>% bind_rows(.id = "genome")}) %>% 
+  bind_rows(.id = "sampleID") -> lengthDataCollated
+
+#bind total count column to lengthData
+lengthDataCollated <- highQsplitCount %>% select(-totalCount) %>% left_join(lengthDataCollated)
+#calculate proportion of lengths and plot
+#pdf("plots/norm.fragment.length.genome.pdf")
+lengthDataCollated %>% mutate(occ = occ/count) %>% ggplot(aes(x=length, y=occ, colour=genome)) +
+  geom_line() +
+  theme_bw() +
+  facet_wrap(~sampleID, ncol = 2, scales = "free", labeller = labeller(sampleID = labels)) + 
+  xlab("Fragment length") + 
+  ylab("Proportion of total reads") + 
+  ggtitle("Normalized fragment lengths by genome (MAPQ > 30)")
+#dev.off()
+
+#Plot norm frag lengths for Elsidron1 alone
+#pdf("plots/norm.frag.lengths.Elsidron1.pdf")
+lengthDataCollated %>% filter(sampleID == "ELSIDRON1") %>% mutate(occ = occ/count) %>%
+  ggplot(aes(x=length, y=occ, colour=genome)) +
+  geom_line() +
+  theme_bw() +
+  xlab("Fragment length") +
+  ylab("Proportion of reads") + 
+  ggtitle("Normalized fragment lengths for Elsidron1 (MAPQ > 30)")
+#dev.off()
+
+#Plot norm frag lengths for Modern alone
+#pdf("plots/norm.frag.lengths.Modern.pdf")
+lengthDataCollated %>% filter(sampleID == "Modern") %>% mutate(occ = occ/count) %>%
+  ggplot(aes(x=length, y=occ, colour=genome)) +
+  geom_line() +
+  theme_bw() +
+  xlab("Fragment length") +
+  ylab("Proportion of reads") + 
+  ggtitle("Normalized fragment lengths for Modern (MAPQ > 30)")
+#dev.off()
+
+#Plot frag lengths each in genome Modern sample
+#pdf("plots/compare.frag.lengths.genome.Modern.pdf")
+lengthDataCollated %>% filter(sampleID == "Modern") %>% 
+  ggplot(aes(x=length, y=occ, colour=genome)) + 
+  geom_line() + theme_bw() + 
+  facet_wrap(~genome, ncol=3, scales = "free") + 
+  xlab("Fragment length") + 
+  ylab("Number of reads") + 
+  ggtitle("Compare fragment lengths of each species (Modern, MAPQ > 30)") + 
+  guides(colour=FALSE) + 
+  xlim(22,190)
+#dev.off()
+
+#Plot frag lengths each in genome Elsidron1 sample
+#pdf("plots/compare.frag.lengths.genome.Elsidron1.pdf")
+lengthDataCollated %>% filter(sampleID == "ELSIDRON1") %>% 
+  ggplot(aes(x=length, y=occ, colour=genome)) + 
+  geom_line() + theme_bw() + 
+  facet_wrap(~genome, ncol=3, scales = "free") + 
+  xlab("Fragment length") + 
+  ylab("Number of reads") + 
+  ggtitle("Compare fragment lengths by species (Elsidron1, MAPQ > 30)") + 
+  guides(colour=FALSE) + 
+  xlim(22,190)
+#dev.off()
+```
+
+Plotted fragment lengths by genome after removal of very short reads. Reduction in the skewing previously observed.
+
+```{r eval=FALSE}
+
+# create list of all .txt files in folder 
+filteredLgDistFiles <- list.files("filteredMapData/highQualMapData/", pattern = "lgdistribution.txt", 
+                          full.names = TRUE, recursive = TRUE)
+
+#read-in data from each text file and bind into a data frame
+filteredLengthData <- filteredLgDistFiles %>% lapply(function(x){
+  read_delim(x, delim = "\t", skip = 4, col_names = FALSE) %>%
+    #    set_colnames(c("std", "length", "freq")) %>%
+    mutate(fileName = x)
+}) %>%
+  bind_rows
+#filteredLengthData <- filteredLengthData %>% select(-X) 
+names(filteredLengthData) <- c("std", "length", "occ", "fileName")
+#Remove unnecessary information from fileName
+filteredLengthData$fileName <- gsub('filteredMapData/highQualMapData//results_', '', filteredLengthData$fileName)
+filteredLengthData$fileName <- gsub('_Q30_split/lgdistribution.txt', '', filteredLengthData$fileName)
+
+
+#Split fileName into sampleID and genome
+filteredLengthData <- colsplit(filteredLengthData$fileName, "_", names=c("sampleID", "genome")) %>% bind_cols(filteredLengthData) %>% select(-fileName)
+
+#Split lengthData by sampleID and then by genome, summarise occ of each length and bind back together
+filteredLengthData %>% select(-std) %>% split(f = .$sampleID) %>% lapply(function(x){x %>% select(-sampleID) %>% split(f = .$genome) %>% 
+    lapply(function(z){z %>% select(-genome) %>% group_by(length) %>% summarise_each(funs(sum))}) %>% bind_rows(.id = "genome")}) %>% 
+  bind_rows(.id = "sampleID") -> filteredLengthData
+
+#Plot frag lengths each in genome Modern sample
+
+filteredLengthData %>% filter(sampleID == "Modern") %>% 
+  ggplot(aes(x=length, y=occ, colour=genome)) + 
+  geom_line() + theme_bw() + 
+  facet_wrap(~genome, ncol=3, scales = "free") + 
+  xlab("Fragment length") + 
+  ylab("Number of reads") + 
+  ggtitle("Compare fragment lengths of each species (Modern, MAPQ > 30)") + 
+  guides(colour=FALSE) + 
+  xlim(22,190)
+#dev.off()
+
+filteredLengthData %>% filter(sampleID == "Elsidron1") %>% 
+  ggplot(aes(x=length, y=occ, colour=genome)) + 
+  geom_line() + theme_bw() + 
+  facet_wrap(~genome, ncol=3, scales = "free") + 
+  xlab("Fragment length") + 
+  ylab("Number of reads") + 
+  ggtitle("Compare fragment lengths of each species (Elsidron1, MAPQ > 30)") + 
+  guides(colour=FALSE) + 
+  xlim(22,190)
+```
+
+Met with Laura. Happy with progress. Intrigued by idea of using de novo analysis. Aware this will need extensive testing to confirm that it is robust and investigate effect of contamination on results. Would like me to present to ACAD. Will look at getting me access to their server and thus more samples for running analysis (although will need to provide metadata to go with samples).
+
+#June 26
+
+Student Meeting at 10am
+Listed ideas/questions/tasks coming from meeting with Laura:
+
+- Tidy presentation for ACAD. Ensure hypotheses are clear and have read up on relevant background
+
+- Meet with Jimmy to discuss:
+    - using Metaphlan for identifying abundance species to then run damage analysis pipeline on
+    - how to improve efficiency of code for de novo damage assessment
+    - ability to access ACAD server
+    - research proposal ideas
+    - accessing simulated data for running through pipeline (assessing accuracy of bwa)
+    
+- Summarise code for important plots into new R markdown that:
+    - clearly indicates question/hypothesis being addressed
+    - uses functions where possible (no more copy and paste)
+    - describe relevant biological/bioinformatic reasoning/implications (reference)
+
+- compare relative abundance estimates, and effects on # of reads per genome, for including lower MAPQ alignments (IS there a cut-off that preserves quality but achieves higher sample size??)
+    
+- After removal of short fragments (<30bp) and low abundant species (<1000 reads) replot to observe differences in deamination rate and fragment lengths according to following physiological traits:
+  - cell wall structure (gram stain)
+  - GC content
+  - phylum
+  - presence of oxidative genes
+  - mapDamage estimates of single stranded and double stranded deamination rates
+  - mapDamage fragmentation constant of different genomes (lambda)
+  
+- Meet with Steve to discuss potential statistical tests to be applied to above estimates to identify if any of these physiological traits result in statistically significant 
+
+- Reading:
+  - Review by Warinner
+  - mapDamage2.0 paper (try to understand how estimates calculated for later comparisons)
+  - ANOVA and other potential statistical tests
+  - bwa aligner
+  - MAPQ
+
+Additional quetions arising from this meeting:
+- What is the purpose/rationale behind -q filtering bwa alignments? (email Laura to ask)
+- Have bwa parameters been tested on metagenomic data sets? (search literature; ask Jimmy/Laura)
+- Is it worth running simulated data through bwa and bwa-mem alignment to obtain estimates of spurious alignment and its effect on mapDamage analysis?
+- Could you use samtools flags to select out only uniquely aligned reads in order to exclude reads aligning multiple times due to conservation between species??
+- If eveness of coverage can be used to validate species assignments (as suggested in Warinner et al., 2017) can this be added to damage analysis pipeline or extracted from bam files and visualised in some way??
+
+Tasks completed today:
+- read Warinner paper and noted key ideas (must add to reading summary)
+- requested meeting with Steve Friday to discuss statistical tests
+- Extracted FLAGs from Elsidron1 and Modern rmdup.bam; sorted and counted.
+
+```{bash eval=FALSE}
+a1698312@jacqueline-hubvm:~/weyrich/mapData$ samtools view 2NoAdapt_ELSIDRON1L7_lTACTG_rCTCGA_rmdup.bam | cut -f2 | sort | uniq -c
+ 285736 0
+ 286888 16
+ a1698312@jacqueline-hubvm:~/weyrich/mapData$ samtools view 2NoAdapt_ModernL7_lAAGAG_rNONE_rmdup.bam | cut -f2 | sort | uniq -c
+ 385181 0
+ 388366 16
+```
+
+Using the github Decoding SAM flags find that a flag of 0 indicates no properties. Flag of 16 indicates 'read reverse strand' (which explains how mapDamage is assessing whether the read in +/- strand)
+Thus either the reads are already uniquely aligned (due to parameters applied when original bam file created - only flag set was -F0x4 which excludes unmapped reads) or cannot extract such reads (as I envisiage them) with SAM flags.
+
+Discovered a very fast way of obtaining counts for each genome from rmdup.bam file:
+
+```{bash eval=FALSE}
+a1698312@jacqueline-hubvm:~/weyrich/mapData$ samtools view 2NoAdapt_ModernL7_lAAGAG_rNONE_rmdup.bam | cut -f3 | sort | uniq -c
+   3965 NC_000907.1
+  10161 NC_002967.9
+  64256 NC_003112.2
+ 367978 NC_003454.1
+   3684 NC_004350.2
+  18140 NC_010729.1
+   1284 NC_013203.1
+  69511 NC_013853.1
+ 101302 NC_016610.1
+   8605 NC_017860.1
+  58154 NC_017861.1
+   6814 NC_023036.2
+  29568 NZ_CP012196.1
+  28004 NZ_CP014232.1
+   1785 NZ_GG688422.1
+      1 NZ_LWMU01000001.1
+      1 NZ_LWMU01000010.1
+      7 NZ_LWMU01000011.1
+      ...
+```
+
+Would need to collate data for individual scaffolds with NZ_LWMU id.
+
+Can extract alignment position from rmdup.bam file, and write to text file using:
+
+```{bash eval=FALSE}
+samtools view 2NoAdapt_ModernL7_lAAGAG_rNONE_rmdup.bam | cut -f4 | sort | uniq -c > Mod_aln_pos_summary.txt
+```
+
+The resulting text file is 9.2MB (too large to open and view in R)
+In general, few alignments at exactly same position, although many alignments appear to overlap each other and thus contain similar/identical sequences. How does this affect MAPQ??
+
+#June 27
+
+Researched Bergey's tests for bacterial identification/classification and identified the oxidase, catalase, VC and GC% of the 15 genomes currently used in my mapDamage Analysis. These classifications along with phylum will be used to create additional plots comparing damage patterns and run statistical analysis on. 
+
+Started a new Rmarkdown document outlining the progression of my pipeline. Aiming to include in this all key research questions, results and related code. Will attempt to consolidate code and as it is incorporated in the Rmarkdown to reduce length/redundancies and better incorporate functions. Also aim to fill in any additional questions and results e.g. what is the effect of aligning fastq files to individual genomes as opposed to a concatenated fasta file.
+
+###What is the effect of aligning fastq files to individual genomes as opposed to a concatenated fasta file.
+
+When analysing Weyrich data have only used concatenated files but still have original analysis of Ziesmer data which was performed both ways. Went back and made counted alignments at each MAPQ for individually aligned and collectively aligned samples. Code to complete these counts is displayed below (Run time = seconds):
+
+```{bash eval=FALSE}
+#!/bin/bash
+
+#count _bwa.bam and _rmdup.bam files when fastq files individually aligned to RefSeq genomes
+#collate MAPQ scores for _rmdup.bam files and _split.bam files (when aligned to concatenated fasta file)
+
+#Specify variables
+ROOTDIR=/home/a1698312
+MERGEDIR=$ROOTDIR/ziesemer/mergedData
+AORISDIR=$ROOTDIR/ziesemer/aoris
+PGINGDIR=$ROOTDIR/ziesemer/pgingivalis
+PPROPDIR=$ROOTDIR/ziesemer/ppropionicum
+SMUTANSDIR=$ROOTDIR/ziesemer/smutans
+TFORSDIR=$ROOTDIR/ziesemer/tforsythia
+ALNDIR=$ROOTDIR/ziesemer/alnData
+
+########### Count bwa.bam and rmdup.bam alignments at each MAPQ when fastq file aligned individually ###############
+
+############ A.oris ############
+
+#Change into directory where aoris files located
+if [ -d ${AORISDIR} ]
+then
+echo "Changing to aoris directory"
+cd ${AORISDIR}
+else
+  echo "Cannot find ${AORISDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f aoris_align_count.txt ]
+then
+echo -e 'Creating file aoris_align_count.txt'
+echo -e 'reads\tMAPQ' > aoris_align_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count reads in *_bwa.bam at different MAPQ scores
+for bwa_file in *bwa.bam
+do
+echo "Counting reads in ${bwa_file}"
+BAMCOUNT=$(samtools view ${bwa_file} | cut -f5 | sort | uniq -c)
+echo -e "${bwa_file}" >> aoris_align_count.txt
+echo -e "${BAMCOUNT}" >> aoris_align_count.txt
+done
+
+#Count reads in *_rmdup.bam at different MAPQ scores
+for rmdup_file in *rmdup.bam
+do
+echo "Counting reads in ${rmdup_file}"
+RMDUPCOUNT=$(samtools view ${rmdup_file} | cut -f5 | sort | uniq -c)
+echo -e "${rmdup_file}" >> aoris_align_count.txt
+echo -e "${RMDUPCOUNT}" >> aoris_align_count.txt
+done
+
+########## P.gingivalis ################
+
+#Change into directory where pgingivalis files located
+if [ -d ${PGINGDIR} ]
+then
+echo "Changing to pgingivalis directory"
+cd ${PGINGDIR}
+else
+  echo "Cannot find ${PGINGDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f pging_align_count.txt ]
+then
+echo -e 'Creating file pging_align_count.txt'
+echo -e 'reads\tMAPQ' > pging_align_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count reads in *_bwa.bam at different MAPQ scores
+for bwa_file in *bwa.bam
+do
+echo "Counting reads in ${bwa_file}"
+BAMCOUNT=$(samtools view ${bwa_file} | cut -f5 | sort | uniq -c)
+echo -e "${bwa_file}" >> pging_align_count.txt
+echo -e "${BAMCOUNT}" >> pging_align_count.txt
+done
+
+#Count reads in *_rmdup.bam at different MAPQ scores
+for rmdup_file in *rmdup.bam
+do
+echo "Counting reads in ${rmdup_file}"
+RMDUPCOUNT=$(samtools view ${rmdup_file} | cut -f5 | sort | uniq -c)
+echo -e "${rmdup_file}" >> pging_align_count.txt
+echo -e "${RMDUPCOUNT}" >> pging_align_count.txt
+done
+
+############ P.propionicum ###################
+
+#Change into directory where ppropionicum files located
+if [ -d ${PPROPDIR} ]
+then
+echo "Changing to ppropionicum directory"
+cd ${PPROPDIR}
+else
+  echo "Cannot find ${PPROPDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f pprop_align_count.txt ]
+then
+echo -e 'Creating file pprop_align_count.txt'
+echo -e 'reads\tMAPQ' > pprop_align_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count reads in *_bwa.bam at different MAPQ scores
+for bwa_file in *bwa.bam
+do
+echo "Counting reads in ${bwa_file}"
+BAMCOUNT=$(samtools view ${bwa_file} | cut -f5 | sort | uniq -c)
+echo -e "${bwa_file}" >> pprop_align_count.txt
+echo -e "${BAMCOUNT}" >> pprop_align_count.txt
+done
+
+#Count reads in *_rmdup.bam at different MAPQ scores
+for rmdup_file in *rmdup.bam
+do
+echo "Counting reads in ${rmdup_file}"
+RMDUPCOUNT=$(samtools view ${rmdup_file} | cut -f5 | sort | uniq -c)
+echo -e "${rmdup_file}" >> pprop_align_count.txt
+echo -e "${RMDUPCOUNT}" >> pprop_align_count.txt
+done
+
+############ S.mutans #############
+
+#Change into directory where smutans files located
+if [ -d ${SMUTANSDIR} ]
+then
+echo "Changing to smutans directory"
+cd ${SMUTANSDIR}
+else
+  echo "Cannot find ${SMUTANSDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f smutans_align_count.txt ]
+then
+echo -e 'Creating file smutans_align_count.txt'
+echo -e 'reads\tMAPQ' > smutans_align_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count reads in *_bwa.bam at different MAPQ scores
+for bwa_file in *bwa.bam
+do
+echo "Counting reads in ${bwa_file}"
+BAMCOUNT=$(samtools view ${bwa_file} | cut -f5 | sort | uniq -c)
+echo -e "${bwa_file}" >> smutans_align_count.txt
+echo -e "${BAMCOUNT}" >> smutans_align_count.txt
+done
+
+#Count reads in *_rmdup.bam at different MAPQ scores
+for rmdup_file in *rmdup.bam
+do
+echo "Counting reads in ${rmdup_file}"
+RMDUPCOUNT=$(samtools view ${rmdup_file} | cut -f5 | sort | uniq -c)
+echo -e "${rmdup_file}" >> smutans_align_count.txt
+echo -e "${RMDUPCOUNT}" >> smutans_align_count.txt
+done
+
+########## T.forsythia ###############
+
+#Change into directory where tforsythia files located
+if [ -d ${TFORSDIR} ]
+then
+echo "Changing to tforsythia directory"
+cd ${TFORSDIR}
+else
+  echo "Cannot find ${TFORSDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f tfors_align_count.txt ]
+then
+echo -e 'Creating file tfors_align_count.txt'
+echo -e 'reads\tMAPQ' > tfors_align_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count reads in *_bwa.bam at different MAPQ scores
+for bwa_file in *bwa.bam
+do
+echo "Counting reads in ${bwa_file}"
+BAMCOUNT=$(samtools view ${bwa_file} | cut -f5 | sort | uniq -c)
+echo -e "${bwa_file}" >> tfors_align_count.txt
+echo -e "${BAMCOUNT}" >> tfors_align_count.txt
+done
+
+#Count reads in *_rmdup.bam at different MAPQ scores
+for rmdup_file in *rmdup.bam
+do
+echo "Counting reads in ${rmdup_file}"
+RMDUPCOUNT=$(samtools view ${rmdup_file} | cut -f5 | sort | uniq -c)
+echo -e "${rmdup_file}" >> tfors_align_count.txt
+echo -e "${RMDUPCOUNT}" >> tfors_align_count.txt
+done
+
+########### Count bwa.bam, rmdup.bam and split.bam alignments at each MAPQ when fastq file aligned to collective fasta file ###############
+
+#Change into directory where aln_files located
+if [ -d ${ALNDIR} ]
+then
+  echo "Changing to alnData directory"
+  cd ${ALNDIR}
+else
+  echo "Cannot find ${ALNDIR}"
+exit1
+fi
+
+#Generate text file for storing alignment count data
+if [ ! -f collective_align_count.txt ]
+then
+  echo -e 'Creating file collective_align_count.txt'
+  echo -e 'reads\tMAPQ' > collective_align_count.txt
+else
+  echo  'Alignment count file already exists'
+fi
+
+#Count reads in *_bwa.bam at different MAPQ scores
+for bwa_file in *bwa.bam
+do
+echo "Counting reads in ${bwa_file}"
+BAMCOUNT=$(samtools view ${bwa_file} | cut -f5 | sort | uniq -c)
+echo -e "${bwa_file}" >> collective_align_count.txt
+echo -e "${BAMCOUNT}" >> collective_align_count.txt
+done
+
+#Count reads in *_rmdup.bam at different MAPQ scores
+for rmdup_file in *rmdup.bam
+do
+echo "Counting reads in ${rmdup_file}"
+RMDUPCOUNT=$(samtools view ${rmdup_file} | cut -f5 | sort | uniq -c)
+echo -e "${rmdup_file}" >> collective_align_count.txt
+echo -e "${RMDUPCOUNT}" >> collective_align_count.txt
+done
+
+#Count reads in *_split.bam at different MAPQ scores
+for split_file in *split.bam
+do
+echo "Counting reads in ${split_file}"
+SPLITCOUNT=$(samtools view ${split_file} | cut -f5 | sort | uniq -c)
+echo -e "${split_file}" >> collective_align_count.txt
+echo -e "${SPLITCOUNT}" >> collective_align_count.txt
+done
+```
+
+Began a new R.script for analysing these counts ('compareIndividualVsCatFastaFileAlignments'). Wrote code to load counts into R and shape the data. Initial progress on script shown below:
+
+```{r eval=FALSE}
+## Comparing #of mapped reads and MAPQ between single genome alignment and concatenated alignment
+
+#Question1: Can fastq reads from metagenomic data align to multiple genomes if data is aligned to each microbial genome separately?
+#Question2: Do reads aligning to multiple microbial genomes (due to conservation in sequence between genomes) display lower MAPQ scores?
+
+#Data used for generating following plots passed through the following workflow:
+## fastq -> 
+  #align to following 5 genomes individually (A.oris;P.gingivalis;P.propionicum;S.mutans;T.forsythia) ->
+    #sort and remove duplicates
+      #count number of reads at each MAPQ for bwa.bam & rmdup.bam
+## fastq -> 
+  #align to cat fasta of 5 genomes -> 
+    #sort and remove duplicates ->
+      #split bam according to genome -> 
+        #count number of reads at each MAPQ for bwa.bam, rmdup.bam & all split.bam
+
+################# Plot number of reads at each MAPQ for each sample ############################
+
+#load packages
+library(dplyr)
+library(readr)
+library(magrittr)
+library(tibble)
+library(stringr)
+library(reshape2)
+library(ggplot2)
+
+#Create list of all *align_count.txt files in separate folders
+MAPQ_count_Files <- list.files("~/ziesemer", pattern = "_align_count.txt", full.names = FALSE, recursive = TRUE)
+
+#read in data for A.oris individual alignment
+MAPQdata <- MAPQ_count_Files %>% 
+  lapply(function(x){read.csv(x, sep="", skip=1, header=FALSE) %>% 
+      set_colnames(c("count", "MAPQ")) %>% 
+      mutate(fileName = x)}) %>% 
+  bind_rows()
+
+#edit fileNames
+MAPQdata$fileName <- gsub('_align_count.txt', '', MAPQdata$fileName)
+MAPQdata$fileName <- gsub('.+/', '', MAPQdata$fileName)
+
+#create a list of original counted fileNames and assign to a data frame
+MAPQdata %>% select(count) %>% 
+  mutate(file = grepl("bam", count)) %>% 
+  filter(file == "TRUE") %>% 
+  select(count) -> MAPQfiles
+#convert the data frame to a character vector
+MAPQfiles <- MAPQfiles$count
+#split data frame at each NA/bam file
+MAPQdata %>% mutate(bam = grepl("bam", count), fileNo = cumsum(bam)) %>% split(f = .$fileNo) -> MAPQdata
+#assign bam fileNames in MAPQfiles as name for each component of list
+names(MAPQdata) <- MAPQfiles
+#Bind rows of list, taking names and re-inserting as file
+MAPQdata <- MAPQdata %>% bind_rows(.id = "file")
+#remove unnecessary columns and rows
+MAPQdata <- MAPQdata %>% select(-bam, -fileNo) %>% filter(MAPQ != "NA")
+#edit variable names
+names(MAPQdata) <- c("file", "No.Reads", "MAPQ", "alignment")
+```
+
+#June 28
+
+Tasks:
+Answer question from yesterday regarding the effect of single vs concatenated fasta file alignment. 
+Email Laura about role of MAPQ score in filtering (and whether there are additional parameter to plot)
+Finish outlining document on damage AnalysisPipeline and begin consolidating code
+
+Completed:
+Subsetted and plotted count data to address 4 questions about the effect of aligning to individual genomes as opposed to a concatenated fasta file
+
+```{r eval=FALSE}
+###### Obtain total counts for each bwa.bam and rmdup.bam and compare in data table and plot #####
+
+#Convert No.Reads variable from chr to num
+MAPQdata$No.Reads <- as.numeric(MAPQdata$No.Reads)
+#Group by file, summarise No.Reads and assign to new object
+MAPQdata %>% select(-MAPQ, -alignment) %>% group_by(file) %>% summarise_each(funs(sum)) -> bamCounts
+#split fileName into sample ID and alnType
+bamCounts <- colsplit(bamCounts$file, "_", names=c("sampleID", "alnType")) %>% bind_cols(bamCounts) %>% select(-file)
+bamCounts$alnType <- gsub('.bam', '', bamCounts$alnType)
+#Generate a table with sampleID, genome, No. individual alignments, No. collective alignments
+bamCounts %>% filter(alnType != "bwa") %>% filter(alnType != "rmdup") -> bamCountTable
+bamCountTable <- colsplit(bamCountTable$alnType, "_", names=c("genome", "alignment")) %>% 
+  bind_cols(bamCountTable) %>% 
+  select(-alnType) %>% 
+  filter(alignment != "bwa") 
+#re-order variables; convert from long to wide format
+bamCountTable <- bamCountTable[, c(3,1,2,4)]
+bamCountTable <- dcast(bamCountTable, sampleID + genome ~ alignment, value.var = "No.Reads")
+#add variable indicating difference in # alignments
+bamCountTable %>% mutate(extraAln = rmdup-split) -> bamCountTable
+#edit variable names
+names(bamCountTable) <- c("sampleID", "genome", "individual", "collective", "difference")
+#calculate the %change in number of alignments when alignment is performed individually rather than collectivly
+bamCountTable <- bamCountTable %>% mutate(propDiff = (difference/collective)*100)
+#round %change to 1 decimal place 
+bamCountTable[,6] <- round(bamCountTable[,6],1)
+
+### Are there more reads aligning to each genome when alignments performed individually rather than collectively? ###
+
+#Viewing the table we see that in the case of aoris, pging, pprop & tfors there are more reads aligning when alignments 
+  #performed individually rather than collectively. The increase is by 100-500 reads or 10-200% increase in the number of alignments.
+  #The only exception is smutans which in 3 of the 4 samples demonstrates a ~30-35% decrease in the number of reads that align 
+    #when alignment is performed individually rather than collectively. 
+
+#plot to demonstrate difference in number of alignments of individually vs concatenated files
+#pdf("~/weyrich/plots/No.reads.aln.Individual.vs.Concatenated.pdf")
+bamCountTable %>% select(-propDiff, -difference) %>% melt(id.vars = c("sampleID", "genome")) %>% 
+  ggplot(aes(x=genome, y=value, fill=variable)) + 
+  geom_bar(stat="identity", position = position_dodge()) + 
+  theme_bw() + 
+  facet_wrap(~sampleID, scales = "free") + 
+  guides(fill=guide_legend(title=NULL)) + 
+  scale_x_discrete(labels=c("A.oris", "P.gingivalis", "P.propionicum", "S.mutans", "T.forsythia")) + 
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=.5)) +
+  xlab("") + 
+  ylab("Number of aligned reads") + 
+  ggtitle("Effect of aligning reads to inividual genomes vs concatenated index")
+#dev.off()
+
+#plot to demonstrate % change in alingnments when run individually vs concatenated index
+#pdf("~/weyrich/plots/propChangeAlignmens.Individual.vs.Concatenated.pdf")
+bamCountTable %>% select(sampleID, genome, propDiff) %>% 
+  ggplot(aes(x=sampleID, y=propDiff, fill=genome)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  ylab("% change in number of alignments") + 
+  ggtitle("% change in the number of reads aligning\nwhen alignment is run against individual genomes") + 
+  scale_fill_discrete(labels=c("A.oris", "P.gingivalis", "P.propionicum", "S.mutans", "T.forsythia"))
+#dev.off()
+
+### Are there more reads aligning overall when alignment performed to individual genomes or collective index? ###
+
+#filter out bwa and rmdup counts for collective alignments
+bamCounts %>% filter(alnType == "bwa") -> overallBamCounts
+overallBamCounts <- bamCounts %>% filter(alnType == "rmdup") %>% left_join(overallBamCounts, by = "sampleID")
+#Subset the bamCounts data frame to include only individually aligned rmdup counts for each sampleID, 
+  #group_by sampleID & summarise, before binding to overallBamCounts
+subset(bamCounts, grepl("_rmdup$", bamCounts$alnType)) %>% 
+  select(-alnType) %>% group_by(sampleID) %>% 
+  summarise_each(funs(sum)) %>% 
+  mutate(alnType = "ind.rmdup") %>% 
+  left_join(overallBamCounts, by = "sampleID") -> overallBamCounts
+#Repeat above step for bwa counts
+subset(bamCounts, grepl("_bwa$", bamCounts$alnType)) %>% 
+  select(-alnType) %>% group_by(sampleID) %>% 
+  summarise_each(funs(sum)) %>% 
+  mutate(alnType = "ind.bwa") %>% 
+  left_join(overallBamCounts, by = "sampleID") -> overallBamCounts
+#re-order columns and re-name variables
+overallBamCounts %>% select(-alnType1, -alnType2, -alnType4, -alnType3) %>% .[,c(1:3,5,4)] -> overallBamCounts
+
+#Looking at the counts we see that there are considerably more reads aligning and remaining after duplicate removal 
+  #if files are aligned individually as opposed to a concatenated fasta file
+
+#Plot comparison in Counts aligned and remaining after duplicate removal for each type of alignment
+overallBamCounts %>% melt(id.vars = "sampleID") %>% 
+  ggplot(aes(x=sampleID, y=value, fill=variable)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_classic() + 
+  ylab("Number of reads") + 
+  xlab("Sample ID") + 
+  scale_fill_discrete(labels=c("Total aligned individual genomes", "Total aligned individual genomes\n(after de-duplications)",
+                               "Total aligned concatenated file", "Total aligned concatenated file\n(after de-duplication) ")) + 
+  theme(legend.title = element_blank(), legend.justification=c(1,1), legend.position=c(1,1)) + 
+  ggtitle("Comparing number of reads aligning to individual genomes\nversus a concatenated fasta file")
+
+
+### Effect of alignment type of MAPQ score ###
+
+#Use grepl to subset MAPQdata table to include only smutans alignments
+subset(MAPQdata, grepl("_smutans", MAPQdata$file)) -> smutansMAPQdata
+#Split file into sampleID and bam
+colsplit(smutansMAPQdata$file, "_", names=c("sampleID", "smutans", "bam")) %>% 
+  bind_cols(smutansMAPQdata) %>% 
+  select(-file, -smutans) -> smutansMAPQdata
+#plot Number of alignments at each MAPQ for smutans
+smutansMAPQdata %>% filter(bam != "bwa.bam") %>% 
+  select(-bam) %>% 
+  ggplot(aes(x=MAPQ, y=No.Reads, fill=alignment)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  facet_wrap(~sampleID, scales = "free")
+#In the above plot the bar widths vary because none of the collectively aligned reads have a MAPQ > 0
+#To solve need to add additional data to the data frame to include 0 counts for MAPQ 25 and 30 for collective alignment
+smutansMAPQdata %>% filter(bam != "bwa.bam") %>% select(-bam) %>% rbind(c("SRR2075423", "0", "25", "collective")) -> smutansMAPQdata
+smutansMAPQdata <- smutansMAPQdata %>% rbind(c("SRR2075423", "0", "37", "collective"))
+smutansMAPQdata <-smutansMAPQdata %>% rbind(c("SRR2075431", "0", "25", "collective"))
+smutansMAPQdata <- smutansMAPQdata %>% rbind(c("SRR2075431", "0", "37", "collective"))
+smutansMAPQdata <- smutansMAPQdata %>% rbind(c("SRR2075490", "0", "25", "collective"))
+smutansMAPQdata <- smutansMAPQdata %>% rbind(c("SRR2075490", "0", "37", "collective"))
+smutansMAPQdata <- smutansMAPQdata %>% rbind(c("SRR2075503", "0", "25", "collective"))
+smutansMAPQdata <- smutansMAPQdata %>% rbind(c("SRR2075503", "0", "37", "collective"))
+#The above coerced No.Reads variable from numeric to character vector. Thus need to coerce back to numeric prior to plotting
+smutansMAPQdata$No.Reads <- as.numeric(smutansMAPQdata$No.Reads)
+#sort values in columns so that collective together and MAPQ together
+smutansMAPQdata <- smutansMAPQdata[with(smutansMAPQdata, order(sampleID, alignment)), ]
+#Re-plot
+smutansMAPQdata %>% 
+  ggplot(aes(x=MAPQ, y=No.Reads, fill=alignment)) + 
+    geom_bar(stat = "identity", position = position_dodge()) + 
+    theme_bw() + facet_wrap(~sampleID) + xlab("MAPQ score") + 
+    ylab("Number of Reads aligning") + 
+    scale_fill_discrete(name = "Alignment", labels=c("Collective", "Individual")) + 
+    ggtitle("Effect of alignment protocol or MAPQ of reads aligning to S.mutans") 
+
+#Plot demonstrates that when fastq files aligned to genome individually, MAPQ of alignments is higher.
+  #All reads aligning to S.mutans in concatenated file have MAPQ 0, indicating these reads likely align to multiple genomes in 
+    #concatenated fasta file and thus represent conserved sequences rather than being from S.mutans
+
+#Repeat above manipulation and plotting for one other genome (A.oris)
+#subset alignments related specifically to A.oris and assign to new object
+subset(MAPQdata, grepl("_aoris", MAPQdata$file)) -> aorisMAPQdata
+#Split file into sampleID and bam
+colsplit(aorisMAPQdata$file, "_", names=c("sampleID", "aoris", "bam")) %>% 
+  bind_cols(aorisMAPQdata) %>% 
+  select(-file, -aoris) %>% filter(bam != "bwa.bam") %>% select(-bam) -> aorisMAPQdata
+#Add categories for MAPQ (0, 20-25, 37) and summarise within categories
+aorisMAPQdata$MAPQrange <- cut(aorisMAPQdata$MAPQ, breaks = c(0,20,30,40), 
+                               labels = c("0", "20-25", "37"), right = FALSE)
+aorisMAPQdata %>% select(-MAPQ) %>% split(f = .$sampleID) %>% 
+  lapply(function(x){x %>% select(-sampleID) %>% 
+      split(f = .$alignment) %>% 
+      lapply(function(z){z %>% select(-alignment) %>% 
+          group_by(MAPQrange) %>% 
+          summarise_each(funs(sum))}) %>% 
+      bind_rows(.id = "alignment")}) %>% 
+  bind_rows(.id = "sampleID") -> aorisMAPQdata
+#plot
+aorisMAPQdata %>% 
+  ggplot(aes(x=MAPQrange, y=No.Reads, fill=alignment)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  facet_wrap(~sampleID)
+
+### Repeat for pging
+#subset alignments related specifically to A.oris and assign to new object
+subset(MAPQdata, grepl("_pgingivalis", MAPQdata$file)) -> pgingMAPQdata
+#Split file into sampleID and bam
+colsplit(pgingMAPQdata$file, "_", names=c("sampleID", "pging", "bam")) %>% 
+  bind_cols(pgingMAPQdata) %>% 
+  select(-file, -pging) %>% filter(bam != "bwa.bam") %>% select(-bam) -> pgingMAPQdata
+#Assign categorical values to MAPQ
+pgingMAPQdata$MAPQrange <- cut(pgingMAPQdata$MAPQ, breaks = c(0,20,30,40), 
+                               labels = c("0", "20-25", "37"), right = FALSE)
+#Plot pging
+pgingMAPQdata %>% select(-MAPQ) %>% 
+  ggplot(aes(x=MAPQrange, y=No.Reads, fill=alignment)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  facet_wrap(~sampleID)
+
+### Repeat for pprop
+#subset alignments related specifically to P.propionicum and assign to new object
+subset(MAPQdata, grepl("_ppropionicum", MAPQdata$file)) -> ppropMAPQdata
+#Split file into sampleID and bam
+colsplit(ppropMAPQdata$file, "_", names=c("sampleID", "pprop", "bam")) %>% 
+  bind_cols(ppropMAPQdata) %>% 
+  select(-file, -pprop) %>% filter(bam != "bwa.bam") %>% select(-bam) -> ppropMAPQdata
+#Assign categorical values to MAPQ
+ppropMAPQdata$MAPQrange <- cut(ppropMAPQdata$MAPQ, breaks = c(0,20,30,40), 
+                               labels = c("0", "20-25", "37"), right = FALSE)
+#plot pporp
+ppropMAPQdata %>% select(-MAPQ) %>% 
+  ggplot(aes(x=MAPQrange, y=No.Reads, fill=alignment)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  theme_bw() + 
+  facet_wrap(~sampleID)
+```
+
+There are fewer reads aligning when a concatenated fasta file is used. This implies that some reads are aligning to to multiple genomes due to conservation between species, however this cannot be determine for certain without comparing the fastq readID's between the separate alignments. Interestingly, there are more reads aligning to S.mutans in the concatenated fasta file then when reads are aligned individually (although the MAPQ for all alignments is 0). Suggests these may represent reads that are conserved between species?
+
+**Have bwa alignment parameters been investigated for metagenomic data sets?**
+**Can simulated data be used to demonstrate the most effective process for assessing damage patterns??**
+- i.e. use of concatenated index rather than alignment against single genomes
+- frequency of spurious alignments
+- most appropriate MAPQ cut-offs and read lengths to reduce spurious alignment and increase accuracy of damage estimates.
+
+#June 29
+
+Tasks:
+Finish outlining document on damage AnalysisPipeline and begin consolidating code
+Plot variations on C->T deamination rates and fragment lengths according to additional parameters identified by Laura
+Read up on statistical tests prior to meeting with Steve tomorrow.
+
+Search for articles investigating effectiveness of bwa for identifying species specific reads in a metagenomic sample (search parameters - google scholar; bwa metagenomic aDNA):
+- Characterization of ancient and modern genomes by SNP detection and phylogenomic and metagenomic analysis using PALEOMIX https://www.nature.com/nprot/journal/v9/n5/full/nprot.2014.063.html 
+- Aligning sequence reads, clone sequences and assembly contigs with BWA-MEM https://arxiv.org/abs/1303.3997 - Contesting the presence of wheat in the British Isles 8,000 years ago by assessing ancient DNA authenticity from low-coverage data https://elifesciences.org/articles/10005#s3 
+- Adaptable probabilistic mapping of short reads using position specific scoring matrices (printed)
+
+Plotted variations in fragment lengths according to phenotypic characteristics (cellWall, phylum, GC content, catalase activity). Cell wall the only one that appears to demonstrate separation. This is clearer if genomes with low read counts (<1000) removed (most likely spurious hits).
+
+Had difficulty with generating the vector of lengths for box plot - unable to write in one line of code or create a function to apply  to multiple data frames.
+
+```{r eval=FALSE}
+
+```
+
+Statistical tests:
+
+#June 30
+
+Meeting Alistair RE: Research Proposal
+- Need to come up with outline for proposal over weekend and discuss with Jimmy Monday
+Meeting with Steve RE: statistical tests
+- Suggestions - log transform lengths  and run mixed model effects tests
+- futher refining of the models needed
+- Can apply Kruskal-Wallis however con't use the pairwise.wicox.test as length data contains ties
+- Alternatives to read up on and try: permutation or bootstrap tests 
+
+Steve also helped solve issue with converting frequency data to vector of lengths
+
+```{r eval=FALSE}
+expandedLengths <-  lengthData %>% 
+  split(f = 1:nrow(.)) %>% 
+  lapply(function(x){
+    data_frame(sampleID = x$sampleID, 
+               genome = x$genome, 
+               length = rep(x$length, times = x$occ))}) %>% 
+  bind_rows() %>%
+  mutate(logLength = log(length))
+```
+
+The line 'split(f = 1:nrow(.))' tells it to split 1 row at a time and run the rep function. Using this eliminates the previous error "Variables mut be length 1 or 1". This will now convert the entire data frame with a single code chunk.

@@ -1,0 +1,133 @@
+---
+title: "researchMethodsJuly"
+author: "Jacqueline Rehn"
+date: "7/3/2017"
+output: html_document
+---
+
+## July 3
+
+Meeting with Jimmy to discuss progress and next directions for thesis project:
+- Project aims:
+  1. Identify changes in damage patterns of different bacterial species in aDNA
+  2. Use simulated data to compare taxonomic identification tools
+- Progress:
+  - Only worked on aim 1 to date
+  - Have developed pipeline for analysing damage patterns based on current practices
+  - Quantified damage in bacterial species (still running statistical tests)
+  - Questions arising that have been addressed in part
+    - What is the effect of MAPQ filtering on damage estimates?
+    - What effect does the number of RefSeq used in the alignment have on damage estimates?
+    - What effect does length filtering have on damage estimates?
+    
+    **These results should be followed up with simulated data (known/known) in order to formulate more reliable conclusions**
+    **Need to extracts single values for comparing damage levels based on different permutations of damage assessment pipeline e.g. mean fragment length; freq C->T at pos1 5'; freq G->A at pos1 3'; damage estimates proposed by mapDamage**
+    
+- Future directions:
+  - Major issue with damage estimates is effects of spurious alignments
+  - Brainstormed potential methods for identifying high abundant species for which mapDamage can be run
+    - Take fastq file and convert to fasta with uclust or CD-hit in order to generate a 97% identity representative set (This reduces the amount of data to be aligned). Take rep-set and run through different search engines (Metaphlan; BLAT; BLAST; MALT) to identify species present in high abundance.
+    - Could also use the rep-set's for running de novo damage assessments (what effect does GC content have on the proportions of A/C/T/G??)
+    - de novo damage assessment - run this on multiple simulated data sets including those with contaminant present and assess the effects of this on the damage estimates.
+    - look at split.bam's with IGV and see if getting good coverage of genome or pile-up at conserved regions such as 16S.
+    
+- Research Proposal
+  - potential ideas:
+    - effects of antibiotic use on oral microbiome
+    - effects of industrial revolution on oral microbiome/oral pathogens
+    - accuracy of current methods for identifying oral pathogens (how accurate??)
+    
+Other suggestions:
+- Collate code into a series of R markdown documents, each addressing a different question/issue
+- Compile code frequently to ensure it is reproducible
+- Ensure each R markdown describes what is currently done in field (protocols/assumptions), what I have done and shows a comparison.
+
+## July 5
+
+Tasks:
+- Outline Research proposal
+- Extract key ideas from literature review for inclusion
+- Read/note 3 more articles
+- Outline Rmarkdown documents for preparation/updating (what questions should each address)
+
+## July 6
+
+Tasks:
+- Final thesis presentations at 12:30 and 2pm
+- Reading for research proposal
+- Write possible aims/hypotheses for research proposal
+
+## July 7
+
+Tasks:
+- Journal Club at 10am
+- Reading for research proposal
+- Compare counts and MAPQ scores between samples run with 10 genomes vs 15 genomes (does expanding the number of genomes impact the number and quality of reads aligning)
+- Is it possible to compare readID's in order to determine which reads may be aligning to multiple genomes and thus represent conserved sequences?
+
+Worked on Rmarkdown of expanded samples/genomes. Included bash scripts used to perform data process. Added code to read-in and manipulate count data.
+
+```{r message=FALSE}
+
+#Read-in fastqCount data
+fastqCount <- 
+  read_delim("trimData/fastq_read_count.txt", delim = "\t", skip = 1, col_names = FALSE) %>% 
+  set_colnames(c("fileName", "fastqCount"))
+#split fileName and discard unnecessary information
+colsplit(fastqCount$fileName, "_", names=c("adapters", "sampleID", "extra")) %>% 
+  bind_cols(fastqCount) %>% select(sampleID, fastqCount) -> fastqCount
+
+#Read in bamCount csv file
+bwaCount <- read.csv(file="mapData/bam_read_count.txt", sep="", skip = 1, header = FALSE, col.names = c("bwaCount", "MAPQ"))
+#Split at .bam to generate a list
+bwaCount <- bwaCount %>% mutate(bam = grepl("bam", bwaCount), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Counts listed in same order files are listed within directory
+  #Therefore, generate a list of all bamFiles that were counted
+list.files("mapData/", pattern = "_bwa.bam$", full.names = FALSE) -> bwaFiles
+#assign this list as names of files in bamCount
+names(bwaCount) <- bamFiles
+#Bind_rows of list, taking list names and re-inserting as fileName, then remove unnecessary columns and rows
+bwaCount <- bwaCount %>% bind_rows(.id = "fileName") %>% select(-bam, -fileNo) %>% filter(MAPQ != "NA")
+#split fileName into adapters, sampleID and additional info
+bwaCount <- colsplit(bwaCount$fileName, "_", names=c("adapters", "sampleID", "extra")) %>% 
+  bind_cols(bwaCount) %>% 
+  select(-fileName, -adapters, -extra)
+#Convert bwaCount variable from factor to numeric
+bwaCount %>% mutate_if(is.factor, as.character) -> bwaCount
+bwaCount$bwaCount <- as.numeric(bwaCount$bwaCount)
+
+#Read in rmdupCount csv file
+rmdupCount <- read.csv(file="mapData/rmdup_read_count.txt", sep="", skip = 1, header = FALSE, col.names = c("rmdupCount", "MAPQ"))
+#Split at .bam to generate a list
+rmdupCount <- rmdupCount %>% mutate(bam = grepl("bam", rmdupCount), fileNo = cumsum(bam)) %>% split(f = .$fileNo)
+#Counts listed in same order files are listed within directory
+  #Therefore, generate a list of all bamFiles that were counted
+list.files("mapData/", pattern = "_rmdup.bam$", full.names = FALSE) -> rmdupFiles
+#assign this list as names of files in bamCount
+names(rmdupCount) <- rmdupFiles
+#Bind_rows of list, taking list names and re-inserting as fileName, then remove unnecessary information
+rmdupCount <- rmdupCount %>% bind_rows(.id = "fileName") %>% select(-bam, -fileNo) %>% filter(MAPQ != "NA")
+#split fileName into adapters, sampleID and additional info
+rmdupCount <- colsplit(rmdupCount$fileName, "_", names=c("adapters", "sampleID", "extra")) %>% 
+  bind_cols(rmdupCount) %>% 
+  select(-fileName, -adapters, -extra)
+#Convert bwaCount variable from factor to numeric
+rmdupCount %>% mutate_if(is.factor, as.character) -> rmdupCount
+rmdupCount$rmdupCount <- as.numeric(rmdupCount$rmdupCount)
+
+######Create table summarising total fastq, bwa.bam and rmdup.bam for each sample#####
+rmdupCount %>% select(-MAPQ) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalRmdupCount
+bwaCount %>% select(-MAPQ) %>% group_by(sampleID) %>% summarise_each(funs(sum)) -> totalBwaCount
+totalCount <- left_join(fastqCount, totalBwaCount, by = "sampleID")
+totalCount <- left_join(totalCount, totalRmdupCount, by = "sampleID")
+##From this calculate the total number of duplicate reads identified in each sample and add to totalCount
+totalCount %>% mutate(dupCount = bwaCount - rmdupCount) -> totalCount
+totalCount <- totalCount[, c(1:3,5,4)]
+```
+
+#July 10
+
+Student meeting at 10am
+Reading/drafting for research proposal
+
+#July 11
